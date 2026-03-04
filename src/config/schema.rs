@@ -7603,10 +7603,8 @@ tool_dispatcher = "xml"
             draft_update_interval_ms: 1000,
             interrupt_on_new_message: false,
             mention_only: false,
-            progress_mode: ProgressMode::default(),
             group_reply: None,
             base_url: None,
-            ack_enabled: true,
         });
 
         let result = resolve_telegram_allowed_users_env_refs(&mut channels);
@@ -7630,10 +7628,8 @@ tool_dispatcher = "xml"
             draft_update_interval_ms: 1000,
             interrupt_on_new_message: false,
             mention_only: false,
-            progress_mode: ProgressMode::default(),
             group_reply: None,
             base_url: None,
-            ack_enabled: true,
         });
 
         let result = resolve_telegram_allowed_users_env_refs(&mut channels);
@@ -7657,10 +7653,8 @@ tool_dispatcher = "xml"
             draft_update_interval_ms: 1000,
             interrupt_on_new_message: false,
             mention_only: false,
-            progress_mode: ProgressMode::default(),
             group_reply: None,
             base_url: None,
-            ack_enabled: true,
         });
 
         let err = resolve_telegram_allowed_users_env_refs(&mut channels)
@@ -7680,10 +7674,8 @@ tool_dispatcher = "xml"
             draft_update_interval_ms: 1000,
             interrupt_on_new_message: false,
             mention_only: false,
-            progress_mode: ProgressMode::default(),
             group_reply: None,
             base_url: None,
-            ack_enabled: true,
         });
 
         let err = resolve_telegram_allowed_users_env_refs(&mut channels)
