@@ -47,6 +47,11 @@ pub mod datasheet;
 
 pub mod gpio;
 
+/// Raspberry Pi self-discovery and native GPIO tools.
+/// Only compiled on Linux with the `peripheral-rpi` feature.
+#[cfg(all(feature = "peripheral-rpi", target_os = "linux"))]
+pub mod rpi;
+
 // ── Phase 4: ToolRegistry + plugin system ─────────────────────────────────────
 pub mod loader;
 pub mod manifest;
@@ -191,6 +196,43 @@ fn load_hardware_context_from_dir(hw_dir: &std::path::Path, aliases: &[&str]) ->
     sections.join("\n\n")
 }
 
+/// Inject RPi self-discovery tools and system prompt context into the boot result.
+///
+/// Called from both `boot()` variants when the `peripheral-rpi` feature is active
+/// and the binary is running on Linux. If `/proc/device-tree/model` (or
+/// `/proc/cpuinfo`) identifies a Raspberry Pi, the four built-in GPIO/info
+/// tools are added to `tools` and the board description is appended to
+/// `context_files_prompt` so the LLM knows it is running on the device.
+#[cfg(all(feature = "peripheral-rpi", target_os = "linux"))]
+fn inject_rpi_context(
+    tools: &mut Vec<Box<dyn crate::tools::Tool>>,
+    context_files_prompt: &mut String,
+) {
+    if let Some(ctx) = rpi::RpiSystemContext::discover() {
+        tracing::info!(board = %ctx.model.display_name(), ip = %ctx.ip_address, "RPi self-discovery complete");
+        if let Some(led) = ctx.model.onboard_led_gpio() {
+            tracing::info!(gpio = led, "Onboard ACT LED");
+        }
+        println!("[registry] rpi0 ready \u{2192} /dev/gpiomem");
+        if ctx.gpio_available {
+            tools.push(Box::new(rpi::GpioRpiWriteTool));
+            tools.push(Box::new(rpi::GpioRpiReadTool));
+            tools.push(Box::new(rpi::GpioRpiBlinkTool));
+            println!("[registry] loaded built-in: gpio_rpi_write");
+            println!("[registry] loaded built-in: gpio_rpi_read");
+            println!("[registry] loaded built-in: gpio_rpi_blink");
+        }
+        tools.push(Box::new(rpi::RpiSystemInfoTool));
+        println!("[registry] loaded built-in: rpi_system_info");
+        ctx.write_hardware_context_file();
+        let rpi_prompt = ctx.to_system_prompt();
+        if !context_files_prompt.is_empty() {
+            context_files_prompt.push_str("\n\n");
+        }
+        context_files_prompt.push_str(&rpi_prompt);
+    }
+}
+
 /// Boot the hardware subsystem: discover devices + load tool registry.
 ///
 /// With the `hardware` feature: enumerates USB-serial devices, then
@@ -202,6 +244,7 @@ fn load_hardware_context_from_dir(hw_dir: &std::path::Path, aliases: &[&str]) ->
 /// with an empty device registry (GPIO tools will report "no device found"
 /// if called, which is correct).
 #[cfg(feature = "hardware")]
+#[allow(unused_mut)] // tools and context_files_prompt are mutated on Linux+peripheral-rpi
 pub async fn boot(
     peripherals: &crate::config::PeripheralsConfig,
 ) -> anyhow::Result<HardwareBootResult> {
@@ -298,7 +341,7 @@ pub async fn boot(
         let reg = devices.read().await;
         reg.prompt_summary()
     };
-    let tools = registry.into_tools();
+    let mut tools = registry.into_tools();
     if !tools.is_empty() {
         tracing::info!(count = tools.len(), "Hardware registry tools loaded");
     }
@@ -310,10 +353,13 @@ pub async fn boot(
             .collect()
     };
     let alias_refs: Vec<&str> = alias_strings.iter().map(|s: &String| s.as_str()).collect();
-    let context_files_prompt = load_hardware_context_prompt(&alias_refs);
+    let mut context_files_prompt = load_hardware_context_prompt(&alias_refs);
     if !context_files_prompt.is_empty() {
         tracing::info!("Hardware context files loaded");
     }
+    // RPi self-discovery: detect board model and inject GPIO tools + prompt context.
+    #[cfg(all(feature = "peripheral-rpi", target_os = "linux"))]
+    inject_rpi_context(&mut tools, &mut context_files_prompt);
     Ok(HardwareBootResult {
         tools,
         device_summary,
@@ -323,6 +369,7 @@ pub async fn boot(
 
 /// Fallback when the `hardware` feature is disabled — plugins only.
 #[cfg(not(feature = "hardware"))]
+#[allow(unused_mut)] // tools and context_files_prompt are mutated on Linux+peripheral-rpi
 pub async fn boot(
     _peripherals: &crate::config::PeripheralsConfig,
 ) -> anyhow::Result<HardwareBootResult> {
@@ -332,7 +379,7 @@ pub async fn boot(
         let reg = devices.read().await;
         reg.prompt_summary()
     };
-    let tools = registry.into_tools();
+    let mut tools = registry.into_tools();
     if !tools.is_empty() {
         tracing::info!(
             count = tools.len(),
@@ -340,7 +387,10 @@ pub async fn boot(
         );
     }
     // No discovered devices in no-hardware fallback; still load global files.
-    let context_files_prompt = load_hardware_context_prompt(&[]);
+    let mut context_files_prompt = load_hardware_context_prompt(&[]);
+    // RPi self-discovery: detect board model and inject GPIO tools + prompt context.
+    #[cfg(all(feature = "peripheral-rpi", target_os = "linux"))]
+    inject_rpi_context(&mut tools, &mut context_files_prompt);
     Ok(HardwareBootResult {
         tools,
         device_summary,

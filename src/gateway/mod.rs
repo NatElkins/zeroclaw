@@ -8,6 +8,7 @@
 //! - Header sanitization (handled by axum/hyper)
 
 pub mod api;
+mod hardware_context;
 mod openai_compat;
 mod openclaw_compat;
 pub mod sse;
@@ -837,6 +838,14 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/qq", post(handle_qq_webhook))
         // ── OpenClaw migration: tools-enabled chat endpoint ──
         .route("/api/chat", post(openclaw_compat::handle_api_chat))
+        // ── Hardware context management endpoints ──
+        .route("/api/hardware/pin", post(hardware_context::handle_hardware_pin))
+        .route(
+            "/api/hardware/context",
+            get(hardware_context::handle_hardware_context_get)
+                .post(hardware_context::handle_hardware_context_post),
+        )
+        .route("/api/hardware/reload", post(hardware_context::handle_hardware_reload))
         // ── OpenAI-compatible endpoints ──
         .route("/v1/models", get(openai_compat::handle_v1_models))
         .merge(openai_compat_routes)

@@ -1,0 +1,46 @@
+# ZeroClaw — Raspberry Pi starter configuration
+#
+# Copy this to ~/.zeroclaw/config.toml on the Pi.
+# deploy-rpi.sh does this automatically on first deploy.
+#
+# Required: set your API key for the chosen provider in the environment:
+#   export ANTHROPIC_API_KEY=sk-ant-...
+#   export OPENAI_API_KEY=sk-...
+
+default_provider = "anthropic"
+default_model    = "claude-sonnet-4-20250514"
+
+[agent]
+system_prompt = "You are ZeroClaw, an autonomous AI hardware agent running directly on a Raspberry Pi. You have native GPIO access via rppal — no serial cable, no laptop. Use gpio_rpi_write / gpio_rpi_read / gpio_rpi_blink for all GPIO operations."
+max_tokens    = 4096
+
+[gateway]
+enabled          = true
+host             = "0.0.0.0"
+port             = 8080
+require_pairing  = false
+allow_public_bind = true
+
+[peripherals]
+enabled = true
+
+# The RPi GPIO tools are auto-discovered at boot when running with the
+# peripheral-rpi feature — no board entry is required here.
+# Add serial boards (Pico, Arduino) here if you attach them later:
+# [[peripherals.boards]]
+# board     = "pico"
+# transport = "serial"
+# path      = "/dev/ttyACM0"
+# baud      = 115200
+
+[autonomy]
+level                        = "autonomous"
+require_approval_for_medium_risk = false
+block_high_risk_commands     = true
+
+[memory]
+backend = "markdown"
+path    = "~/.zeroclaw/memory"
+
+[logging]
+level = "info"
