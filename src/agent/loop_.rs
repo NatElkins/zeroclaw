@@ -2515,6 +2515,15 @@ pub async fn run(
             tools_registry.extend(peripheral_tools);
         }
     }
+    // Board info/memory-map/memory-read tools use probe-rs or static data (no serial
+    // port, no TIOCEXCL) — always safe to register alongside the hardware feature.
+    {
+        let board_info_tools = crate::peripherals::create_board_info_tools(&config.peripherals);
+        if !board_info_tools.is_empty() {
+            tracing::info!(count = board_info_tools.len(), "Board info tools added");
+            tools_registry.extend(board_info_tools);
+        }
+    }
 
     // ── Hardware registry tools (Phase 4 ToolRegistry + plugins) ──
     let hw_boot = crate::hardware::boot(&config.peripherals).await?;
@@ -3162,6 +3171,12 @@ pub async fn process_message_with_session(
         let peripheral_tools: Vec<Box<dyn Tool>> =
             crate::peripherals::create_peripheral_tools(&config.peripherals).await?;
         tools_registry.extend(peripheral_tools);
+    }
+    // Board info/memory-map/memory-read tools use probe-rs or static data (no serial
+    // port, no TIOCEXCL) — always safe to register alongside the hardware feature.
+    {
+        let board_info_tools = crate::peripherals::create_board_info_tools(&config.peripherals);
+        tools_registry.extend(board_info_tools);
     }
 
     // ── Hardware registry tools (Phase 4 ToolRegistry + plugins) ──

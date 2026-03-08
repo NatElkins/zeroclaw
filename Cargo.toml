@@ -6,6 +6,14 @@ members = [
     "crates/zeroclaw-core",
     "crates/aardvark-sys",
 ]
+exclude = [
+    "firmware/zeroclaw-nucleo",
+    "firmware/zeroclaw-pico",
+    "firmware/zeroclaw-arduino",
+    "firmware/zeroclaw-esp32",
+    "firmware/zeroclaw-esp32-ui",
+    "firmware/zeroclaw-uno-q-bridge",
+]
 resolver = "2"
 
 [package]
