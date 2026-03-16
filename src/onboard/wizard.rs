@@ -179,6 +179,8 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         mcp: crate::config::McpConfig::default(),
         nodes: crate::config::NodesConfig::default(),
         workspace: crate::config::WorkspaceConfig::default(),
+        backup: crate::config::BackupConfig::default(),
+        data_retention: crate::config::DataRetentionConfig::default(),
     };
 
     println!(
@@ -538,6 +540,8 @@ async fn run_quick_setup_with_home(
         mcp: crate::config::McpConfig::default(),
         nodes: crate::config::NodesConfig::default(),
         workspace: crate::config::WorkspaceConfig::default(),
+        backup: crate::config::BackupConfig::default(),
+        data_retention: crate::config::DataRetentionConfig::default(),
     };
 
     config.save().await?;
