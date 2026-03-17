@@ -1,7 +1,10 @@
 //! Dashboard tab -- status cards and memory gauge.
 
 use crate::tui::theme;
-use ratatui::{prelude::*, widgets::{Block, Borders, Gauge, Paragraph}};
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Borders, Gauge, Paragraph},
+};
 
 pub fn render(frame: &mut Frame, area: Rect) {
     let chunks = Layout::default()
@@ -9,7 +12,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
         .constraints([
             Constraint::Length(5), // Status cards row
             Constraint::Length(5), // Memory gauge
-            Constraint::Min(0),   // Info area
+            Constraint::Min(0),    // Info area
         ])
         .split(area);
 

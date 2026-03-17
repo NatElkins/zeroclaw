@@ -93,10 +93,7 @@ pub struct GatewayWsClient {
 
 impl GatewayWsClient {
     pub fn new(gateway_url: String, token: Option<String>) -> Self {
-        Self {
-            gateway_url,
-            token,
-        }
+        Self { gateway_url, token }
     }
 
     /// Connect to the gateway WebSocket chat endpoint.

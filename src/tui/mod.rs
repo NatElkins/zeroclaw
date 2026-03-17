@@ -66,15 +66,17 @@ pub struct TuiApp {
     active_tab: ActiveTab,
     gateway_url: String,
     token: Option<String>,
+    session: Option<String>,
     should_quit: bool,
 }
 
 impl TuiApp {
-    pub fn new(gateway_url: String, token: Option<String>) -> Self {
+    pub fn new(gateway_url: String, token: Option<String>, session: Option<String>) -> Self {
         Self {
             active_tab: ActiveTab::Dashboard,
             gateway_url,
             token,
+            session,
             should_quit: false,
         }
     }
@@ -105,8 +107,9 @@ impl TuiApp {
             if event::poll(std::time::Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
                     match (key.modifiers, key.code) {
-                        (KeyModifiers::CONTROL, KeyCode::Char('c'))
-                        | (_, KeyCode::Char('q')) => self.should_quit = true,
+                        (KeyModifiers::CONTROL, KeyCode::Char('c')) | (_, KeyCode::Char('q')) => {
+                            self.should_quit = true
+                        }
                         (_, KeyCode::Tab) => self.active_tab = self.active_tab.next(),
                         (KeyModifiers::SHIFT, KeyCode::BackTab) => {
                             self.active_tab = self.active_tab.prev();
@@ -125,13 +128,16 @@ impl TuiApp {
     }
 
     fn render(&self, frame: &mut ratatui::Frame) {
-        use ratatui::{prelude::*, widgets::{Block, Borders, Paragraph, Tabs}};
+        use ratatui::{
+            prelude::*,
+            widgets::{Block, Borders, Paragraph, Tabs},
+        };
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3), // Tab bar
-                Constraint::Min(0),   // Content
+                Constraint::Min(0),    // Content
                 Constraint::Length(1), // Status bar
             ])
             .split(frame.area());
@@ -177,9 +183,38 @@ impl TuiApp {
         }
 
         // Status bar
-        let status =
-            Paragraph::new(" Tab/Shift+Tab: switch tabs | q: quit | Ctrl+C: force quit")
-                .style(Style::default().fg(theme::FG_DIM));
+        let status = Paragraph::new(" Tab/Shift+Tab: switch tabs | q: quit | Ctrl+C: force quit")
+            .style(Style::default().fg(theme::FG_DIM));
         frame.render_widget(status, chunks[2]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tab_cycling() {
+        let tab = ActiveTab::Dashboard;
+        assert_eq!(tab.next(), ActiveTab::Channels);
+        assert_eq!(tab.next().next(), ActiveTab::Chat);
+        assert_eq!(ActiveTab::Config.next(), ActiveTab::Dashboard);
+    }
+
+    #[test]
+    fn test_tab_prev() {
+        assert_eq!(ActiveTab::Dashboard.prev(), ActiveTab::Config);
+        assert_eq!(ActiveTab::Channels.prev(), ActiveTab::Dashboard);
+    }
+
+    #[test]
+    fn test_tab_labels() {
+        assert_eq!(ActiveTab::Dashboard.label(), "Dashboard");
+        assert_eq!(ActiveTab::Chat.label(), "Chat");
+    }
+
+    #[test]
+    fn test_all_tabs() {
+        assert_eq!(ActiveTab::all().len(), 5);
     }
 }

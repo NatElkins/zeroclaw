@@ -196,7 +196,7 @@ qrcode = { version = "0.14", optional = true }
 # TUI (Terminal User Interface)
 ratatui = { version = "0.30", optional = true, default-features = false, features = ["crossterm"] }
 crossterm = { version = "0.29", optional = true }
-tui-textarea = { version = "0.7", optional = true }
+tui-textarea = { version = "0.7", optional = true, features = ["crossterm"] }
 
 # WhatsApp Web client (wa-rs) — optional, enable with --features whatsapp-web
 # Uses wa-rs for Bot and Client, wa-rs-core for storage traits, custom rusqlite backend avoids Diesel conflict.

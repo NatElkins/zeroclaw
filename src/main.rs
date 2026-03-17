@@ -538,6 +538,9 @@ Examples:
         /// Bearer token for authentication
         #[arg(long)]
         token: Option<String>,
+        /// Session ID to resume
+        #[arg(long)]
+        session: Option<String>,
     },
 }
 
@@ -1341,10 +1344,11 @@ async fn main() -> Result<()> {
         Commands::Tui {
             gateway_url,
             token,
+            session,
         } => {
-            let url = gateway_url
-                .unwrap_or_else(|| format!("http://127.0.0.1:{}", config.gateway.port));
-            let mut app = zeroclaw::tui::TuiApp::new(url, token);
+            let url =
+                gateway_url.unwrap_or_else(|| format!("http://127.0.0.1:{}", config.gateway.port));
+            let mut app = zeroclaw::tui::TuiApp::new(url, token, session);
             app.run().await
         }
     }

@@ -1,7 +1,10 @@
 //! Logs tab -- scrollable log viewer.
 
 use crate::tui::theme;
-use ratatui::{prelude::*, widgets::{Block, Borders, List, ListItem}};
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Borders, List, ListItem},
+};
 
 pub fn render(frame: &mut Frame, area: Rect) {
     let items: Vec<ListItem> = vec![ListItem::new(Line::from(vec![

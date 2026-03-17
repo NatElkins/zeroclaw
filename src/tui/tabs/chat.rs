@@ -1,7 +1,10 @@
 //! Chat tab -- message list and text input.
 
 use crate::tui::theme;
-use ratatui::{prelude::*, widgets::{Block, Borders, Paragraph, Wrap}};
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Borders, Paragraph, Wrap},
+};
 
 pub fn render(frame: &mut Frame, area: Rect) {
     let chunks = Layout::default()

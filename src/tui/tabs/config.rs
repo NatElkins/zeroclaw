@@ -1,7 +1,10 @@
 //! Config tab -- TOML viewer with editor launch.
 
 use crate::tui::theme;
-use ratatui::{prelude::*, widgets::{Block, Borders, Paragraph}};
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Borders, Paragraph},
+};
 
 pub fn render(frame: &mut Frame, area: Rect) {
     let chunks = Layout::default()

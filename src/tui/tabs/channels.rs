@@ -1,15 +1,14 @@
 //! Channels tab -- table of configured channels with status.
 
 use crate::tui::theme;
-use ratatui::{prelude::*, widgets::{Block, Borders, Row, Table}};
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Borders, Row, Table},
+};
 
 pub fn render(frame: &mut Frame, area: Rect) {
     let header = Row::new(vec!["Channel", "Status", "Type", "Last Message"])
-        .style(
-            Style::default()
-                .fg(theme::FG)
-                .add_modifier(Modifier::BOLD),
-        )
+        .style(Style::default().fg(theme::FG).add_modifier(Modifier::BOLD))
         .bottom_margin(1);
 
     let rows = vec![Row::new(vec!["CLI", "Active", "built-in", "---"])
