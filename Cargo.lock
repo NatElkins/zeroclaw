@@ -12292,30 +12292,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zeroclaw-edge"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "serde",
- "serde_json",
- "tokio",
- "zeroclaw-core",
-]
-
-[[package]]
-name = "zeroclaw-edge-worker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "serde",
- "serde_json",
- "worker",
- "zeroclaw-edge",
-]
-
-[[package]]
 name = "zeroclaw-robot-kit"
 version = "0.1.0"
 dependencies = [
