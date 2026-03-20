@@ -258,21 +258,7 @@ mod tests {
         (router, mocks)
     }
 
-    // Arc<MockProvider> should also be a Provider
-    #[async_trait]
-    impl Provider for Arc<MockProvider> {
-        async fn chat_with_system(
-            &self,
-            system_prompt: Option<&str>,
-            message: &str,
-            model: &str,
-            temperature: f64,
-        ) -> anyhow::Result<String> {
-            self.as_ref()
-                .chat_with_system(system_prompt, message, model, temperature)
-                .await
-        }
-    }
+    // Arc<MockProvider> uses blanket `impl Provider for Arc<T>` from zeroclaw-core.
 
     #[tokio::test]
     async fn routes_hint_to_correct_provider() {

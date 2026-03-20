@@ -9156,6 +9156,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroclaw-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "parking_lot",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "zeroclaw-robot-kit"
 version = "0.1.0"
 dependencies = [
@@ -9268,6 +9284,7 @@ dependencies = [
  "webpki-roots 1.0.6",
  "which",
  "wiremock",
+ "zeroclaw-core",
 ]
 
 [[package]]

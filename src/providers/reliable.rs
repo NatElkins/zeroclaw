@@ -1771,22 +1771,7 @@ mod tests {
         );
     }
 
-    // ── Arc<ModelAwareMock> Provider impl for test ──
-
-    #[async_trait]
-    impl Provider for Arc<ModelAwareMock> {
-        async fn chat_with_system(
-            &self,
-            system_prompt: Option<&str>,
-            message: &str,
-            model: &str,
-            temperature: f64,
-        ) -> anyhow::Result<String> {
-            self.as_ref()
-                .chat_with_system(system_prompt, message, model, temperature)
-                .await
-        }
-    }
+    // Arc<ModelAwareMock> uses blanket `impl Provider for Arc<T>` from zeroclaw-core.
 
     /// Mock provider that implements `chat()` with native tool support.
     struct NativeToolMock {
@@ -2025,33 +2010,7 @@ mod tests {
         }
     }
 
-    #[async_trait]
-    impl Provider for Arc<NativeModelAwareMock> {
-        async fn chat_with_system(
-            &self,
-            system_prompt: Option<&str>,
-            message: &str,
-            model: &str,
-            temperature: f64,
-        ) -> anyhow::Result<String> {
-            self.as_ref()
-                .chat_with_system(system_prompt, message, model, temperature)
-                .await
-        }
-
-        fn supports_native_tools(&self) -> bool {
-            true
-        }
-
-        async fn chat(
-            &self,
-            request: ChatRequest<'_>,
-            model: &str,
-            temperature: f64,
-        ) -> anyhow::Result<ChatResponse> {
-            self.as_ref().chat(request, model, temperature).await
-        }
-    }
+    // Arc<NativeModelAwareMock> uses blanket `impl Provider for Arc<T>` from zeroclaw-core.
 
     /// Gap 3: `chat()` tries fallback models on failure,
     /// matching behavior of `model_failover_tries_fallback_model`.
