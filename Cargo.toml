@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/robot-kit", "crates/aardvark-sys", "apps/tauri"]
+members = [".", "crates/robot-kit", "crates/zeroclaw-core"]
 resolver = "2"
 
 [package]
@@ -123,6 +123,9 @@ serde-big-array = { version = "0.5", optional = true }
 
 # Fast mutexes that don't poison on panic
 parking_lot = "0.12"
+
+# Core trait definitions (shared with WASM target)
+zeroclaw-core = { path = "crates/zeroclaw-core", features = ["reqwest"] }
 
 # Async traits
 async-trait = "0.1"
