@@ -74,6 +74,16 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - status: in progress in stack
    - canary env + observability SLOs + rollback controls
    - typed rollout controller with deterministic promote/hold/rollback behavior
+12. Canary orchestration execution path
+   - PR: #16
+   - status: in progress in stack
+   - metrics ingestion + traffic split apply + event sink persistence
+   - deterministic end-to-end canary tick simulations
+13. Cloudflare CLI traffic client wiring
+   - PR: #17
+   - status: in progress in stack
+   - typed `wrangler versions deploy` adapter for rollout split updates
+   - deterministic command-assembly tests including rollback and `npx wrangler` invocation
 
 ## Milestones And Exit Criteria
 
