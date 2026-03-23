@@ -791,7 +791,7 @@ fn sse_bytes_to_chunks(
         match response.error_for_status_ref() {
             Ok(_) => {}
             Err(e) => {
-                let _ = tx.send(Err(StreamError::Http(e))).await;
+                let _ = tx.send(Err(StreamError::Http(e.into()))).await;
                 return;
             }
         }
@@ -841,7 +841,7 @@ fn sse_bytes_to_chunks(
                     }
                 }
                 Err(e) => {
-                    let _ = tx.send(Err(StreamError::Http(e))).await;
+                    let _ = tx.send(Err(StreamError::Http(e.into()))).await;
                     break;
                 }
             }
@@ -1812,7 +1812,7 @@ impl Provider for OpenAiCompatibleProvider {
             let response = match req_builder.send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    let _ = tx.send(Err(StreamError::Http(e))).await;
+                    let _ = tx.send(Err(StreamError::Http(e.into()))).await;
                     return;
                 }
             };
