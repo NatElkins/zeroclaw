@@ -1,5 +1,10 @@
 [workspace]
-members = [".", "crates/robot-kit", "crates/zeroclaw-core"]
+members = [
+  ".",
+  "crates/robot-kit",
+  "crates/zeroclaw-core",
+  "crates/zeroclaw-edge",
+]
 resolver = "2"
 
 [package]
