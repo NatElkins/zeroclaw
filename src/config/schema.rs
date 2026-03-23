@@ -3824,13 +3824,17 @@ impl Default for AutonomyConfig {
 /// Runtime adapter configuration (`[runtime]` section).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RuntimeConfig {
-    /// Runtime kind (`native` | `docker`).
+    /// Runtime kind (`native` | `docker` | `wasm`).
     #[serde(default = "default_runtime_kind")]
     pub kind: String,
 
     /// Docker runtime settings (used when `kind = "docker"`).
     #[serde(default)]
     pub docker: DockerRuntimeConfig,
+
+    /// WASM runtime settings (used when `kind = "wasm"`).
+    #[serde(default)]
+    pub wasm: WasmRuntimeConfig,
 
     /// Global reasoning override for providers that expose explicit controls.
     /// - `None`: provider default behavior
@@ -3875,6 +3879,34 @@ pub struct DockerRuntimeConfig {
     pub allowed_workspace_roots: Vec<String>,
 }
 
+/// WASM runtime configuration (`[runtime.wasm]` section).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WasmRuntimeConfig {
+    /// Fuel budget for each module invocation (0 = unlimited).
+    #[serde(default = "default_wasm_fuel_limit")]
+    pub fuel_limit: u64,
+
+    /// Max linear memory per module in MB.
+    #[serde(default = "default_wasm_memory_limit_mb")]
+    pub memory_limit_mb: u64,
+
+    /// Relative path from workspace where tool modules are discovered.
+    #[serde(default = "default_wasm_tools_dir")]
+    pub tools_dir: String,
+
+    /// Allow read access to workspace.
+    #[serde(default = "default_false")]
+    pub allow_workspace_read: bool,
+
+    /// Allow write access to workspace.
+    #[serde(default = "default_false")]
+    pub allow_workspace_write: bool,
+
+    /// Host allowlist for outbound network access from modules.
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+}
+
 fn default_runtime_kind() -> String {
     "native".into()
 }
@@ -3895,6 +3927,18 @@ fn default_docker_cpu_limit() -> Option<f64> {
     Some(1.0)
 }
 
+fn default_wasm_fuel_limit() -> u64 {
+    5_000_000
+}
+
+fn default_wasm_memory_limit_mb() -> u64 {
+    64
+}
+
+fn default_wasm_tools_dir() -> String {
+    "tools/wasm".into()
+}
+
 impl Default for DockerRuntimeConfig {
     fn default() -> Self {
         Self {
@@ -3909,11 +3953,25 @@ impl Default for DockerRuntimeConfig {
     }
 }
 
+impl Default for WasmRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            fuel_limit: default_wasm_fuel_limit(),
+            memory_limit_mb: default_wasm_memory_limit_mb(),
+            tools_dir: default_wasm_tools_dir(),
+            allow_workspace_read: false,
+            allow_workspace_write: false,
+            allowed_hosts: Vec::new(),
+        }
+    }
+}
+
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             kind: default_runtime_kind(),
             docker: DockerRuntimeConfig::default(),
+            wasm: WasmRuntimeConfig::default(),
             reasoning_enabled: None,
             reasoning_effort: None,
         }
@@ -8729,6 +8787,40 @@ mod tests {
         assert_eq!(r.docker.cpu_limit, Some(1.0));
         assert!(r.docker.read_only_rootfs);
         assert!(r.docker.mount_workspace);
+        assert_eq!(r.wasm.fuel_limit, 5_000_000);
+        assert_eq!(r.wasm.memory_limit_mb, 64);
+        assert_eq!(r.wasm.tools_dir, "tools/wasm");
+        assert!(!r.wasm.allow_workspace_read);
+        assert!(!r.wasm.allow_workspace_write);
+        assert!(r.wasm.allowed_hosts.is_empty());
+    }
+
+    #[test]
+    async fn runtime_wasm_config_parses_from_toml() {
+        let parsed = parse_test_config(
+            r#"
+[runtime]
+kind = "wasm"
+
+[runtime.wasm]
+fuel_limit = 100000
+memory_limit_mb = 128
+tools_dir = "custom-wasm-tools"
+allow_workspace_read = true
+allow_workspace_write = true
+allowed_hosts = ["api.example.com"]
+"#,
+        );
+        assert_eq!(parsed.runtime.kind, "wasm");
+        assert_eq!(parsed.runtime.wasm.fuel_limit, 100_000);
+        assert_eq!(parsed.runtime.wasm.memory_limit_mb, 128);
+        assert_eq!(parsed.runtime.wasm.tools_dir, "custom-wasm-tools");
+        assert!(parsed.runtime.wasm.allow_workspace_read);
+        assert!(parsed.runtime.wasm.allow_workspace_write);
+        assert_eq!(
+            parsed.runtime.wasm.allowed_hosts,
+            vec!["api.example.com".to_string()]
+        );
     }
 
     #[test]

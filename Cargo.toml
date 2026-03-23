@@ -195,6 +195,8 @@ pdf-extract = { version = "0.10", optional = true }
 
 # WASM plugin runtime (extism)
 extism = { version = "1.9", optional = true }
+# WASM runtime sandbox engine (used by runtime.kind = "wasm")
+wasmi = { version = "0.40", optional = true }
 
 # Terminal QR rendering for WhatsApp Web pairing flow.
 qrcode = { version = "0.14", optional = true }
@@ -249,6 +251,8 @@ skill-creation = []
 whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-proto", "dep:wa-rs-ureq-http", "dep:wa-rs-tokio-transport", "dep:serde-big-array", "dep:prost", "dep:qrcode"]
 # WASM plugin system (extism-based)
 plugins-wasm = ["dep:extism"]
+# WASM runtime adapter (feature-gated to avoid default binary size/regression impact)
+runtime-wasm = ["dep:wasmi"]
 
 [profile.release]
 opt-level = "z"      # Optimize for size
