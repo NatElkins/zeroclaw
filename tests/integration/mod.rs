@@ -4,6 +4,8 @@ mod backup_cron_scheduling;
 mod channel_matrix;
 mod channel_routing;
 mod hooks;
+#[cfg(feature = "memory-postgres")]
+mod hybrid_postgres_memory;
 mod memory_comparison;
 mod memory_loop_continuity;
 mod memory_restart;

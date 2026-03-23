@@ -17,6 +17,21 @@ services:
             - cargo-git:/usr/local/cargo/git
             - ci-target:/ci-target
 
+    postgres-hybrid:
+        image: postgres:16-alpine
+        environment:
+            - POSTGRES_USER=zeroclaw
+            - POSTGRES_PASSWORD=zeroclaw
+            - POSTGRES_DB=zeroclaw_hybrid
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U zeroclaw -d zeroclaw_hybrid"]
+            interval: 2s
+            timeout: 3s
+            retries: 30
+        # Keep test state ephemeral and avoid host port exposure/conflicts.
+        tmpfs:
+            - /var/lib/postgresql/data:rw
+
 volumes:
     cargo-registry:
     cargo-git:

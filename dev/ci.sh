@@ -18,6 +18,36 @@ run_in_ci() {
   "${compose_cmd[@]}" run --rm local-ci bash -c "$cmd"
 }
 
+wait_for_service_ready() {
+  local service="$1"
+  local timeout_secs="${2:-60}"
+  local container_id
+  container_id="$("${compose_cmd[@]}" ps -q "$service")"
+
+  if [ -z "$container_id" ]; then
+    echo "❌ Service '$service' did not start."
+    return 1
+  fi
+
+  for ((i = 0; i < timeout_secs; i++)); do
+    local status
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+    if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "❌ Service '$service' was not ready within ${timeout_secs}s."
+  "${compose_cmd[@]}" logs "$service" || true
+  return 1
+}
+
+cleanup_service() {
+  local service="$1"
+  "${compose_cmd[@]}" rm -sf "$service" >/dev/null 2>&1 || true
+}
+
 build_smoke_image() {
   if docker buildx version >/dev/null 2>&1; then
     mkdir -p "$SMOKE_CACHE_DIR"
@@ -56,6 +86,7 @@ Commands:
   test-live       Run live tests (requires credentials)
   test-wasm-runtime Run wasm runtime feature tests
   test-hybrid-local Run local hybrid readiness suite (component+integration+system+shell+delegate+wasm)
+  test-hybrid-services Run service-backed hybrid suite (Postgres + wasm runtime + remote memory)
   test-manual     Run manual test scripts (dockerignore, etc.)
   build         Run release build smoke check (container only)
   audit         Run cargo audit (container only)
@@ -125,6 +156,24 @@ case "$1" in
     run_in_ci "cargo test tools::delegate::tests:: --locked --verbose"
     run_in_ci "cargo test --features runtime-wasm runtime::tests::factory_wasm --locked --verbose"
     run_in_ci "cargo test --features runtime-wasm runtime::wasm::tests:: --locked --verbose"
+    ;;
+
+  test-hybrid-services)
+    postgres_url="postgres://zeroclaw:zeroclaw@postgres-hybrid:5432/zeroclaw_hybrid"
+    "${compose_cmd[@]}" up -d postgres-hybrid
+    set +e
+    wait_for_service_ready postgres-hybrid 90
+    status=$?
+    if [ "$status" -eq 0 ]; then
+      run_in_ci "ZEROCLAW_TEST_POSTGRES_URL='${postgres_url}' cargo test --features 'memory-postgres runtime-wasm' --test integration hybrid_postgres_memory --locked --verbose"
+      status=$?
+    fi
+    set -e
+
+    cleanup_service postgres-hybrid
+    if [ "$status" -ne 0 ]; then
+      exit "$status"
+    fi
     ;;
 
   test-manual)
