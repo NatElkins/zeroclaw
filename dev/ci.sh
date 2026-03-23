@@ -188,6 +188,24 @@ case "$1" in
     fi
     ;;
 
+  test-hybrid-services)
+    postgres_url="postgres://zeroclaw:zeroclaw@postgres-hybrid:5432/zeroclaw_hybrid"
+    "${compose_cmd[@]}" up -d postgres-hybrid
+    set +e
+    wait_for_service_ready postgres-hybrid 90
+    status=$?
+    if [ "$status" -eq 0 ]; then
+      run_in_ci "ZEROCLAW_TEST_POSTGRES_URL='${postgres_url}' cargo test --features 'memory-postgres runtime-wasm' --test integration hybrid_postgres_memory --locked --verbose"
+      status=$?
+    fi
+    set -e
+
+    cleanup_service postgres-hybrid
+    if [ "$status" -ne 0 ]; then
+      exit "$status"
+    fi
+    ;;
+
   test-manual)
     run_in_ci "bash tests/manual/test_dockerignore.sh"
     ;;
