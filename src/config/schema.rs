@@ -5403,6 +5403,31 @@ pub struct RuntimeConfig {
     /// Optional reasoning effort for providers that expose a level control.
     #[serde(default, deserialize_with = "deserialize_reasoning_effort_opt")]
     pub reasoning_effort: Option<String>,
+
+    /// Capability-aware delegation settings for constrained runtimes.
+    ///
+    /// When configured, tools that are unavailable due to runtime capability
+    /// constraints (for example `shell` on WASM) can be exposed as delegation
+    /// proxies and routed to a named delegate agent.
+    #[serde(default)]
+    pub capability_delegation: RuntimeCapabilityDelegationConfig,
+}
+
+/// Runtime capability delegation configuration (`[runtime.capability_delegation]` section).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RuntimeCapabilityDelegationConfig {
+    /// Delegate agent name used for capability-fallback tool routing.
+    ///
+    /// `None` disables capability-fallback delegation.
+    #[serde(default)]
+    pub agent: Option<String>,
+
+    /// Tool names eligible for capability-fallback delegation.
+    ///
+    /// Defaults to shell/filesystem-heavy tools that commonly require a
+    /// native runtime.
+    #[serde(default = "default_runtime_capability_delegate_tool_names")]
+    pub tool_names: Vec<String>,
 }
 
 /// Docker runtime configuration (`[runtime.docker]` section).
@@ -5497,6 +5522,18 @@ fn default_wasm_tools_dir() -> String {
     "tools/wasm".into()
 }
 
+fn default_runtime_capability_delegate_tool_names() -> Vec<String> {
+    vec![
+        "shell".to_string(),
+        "file_read".to_string(),
+        "file_write".to_string(),
+        "file_edit".to_string(),
+        "glob_search".to_string(),
+        "content_search".to_string(),
+        "git_operations".to_string(),
+    ]
+}
+
 impl Default for DockerRuntimeConfig {
     fn default() -> Self {
         Self {
@@ -5532,6 +5569,16 @@ impl Default for RuntimeConfig {
             wasm: WasmRuntimeConfig::default(),
             reasoning_enabled: None,
             reasoning_effort: None,
+            capability_delegation: RuntimeCapabilityDelegationConfig::default(),
+        }
+    }
+}
+
+impl Default for RuntimeCapabilityDelegationConfig {
+    fn default() -> Self {
+        Self {
+            agent: None,
+            tool_names: default_runtime_capability_delegate_tool_names(),
         }
     }
 }
@@ -10006,6 +10053,48 @@ impl Config {
             }
         }
 
+        // Runtime capability-fallback delegation
+        if let Some(agent_name) = self.runtime.capability_delegation.agent.as_deref() {
+            let trimmed = agent_name.trim();
+            if trimmed.is_empty() {
+                anyhow::bail!("runtime.capability_delegation.agent must not be empty when set");
+            }
+            if !self.agents.contains_key(trimmed) {
+                anyhow::bail!(
+                    "runtime.capability_delegation.agent references unknown agent '{trimmed}'"
+                );
+            }
+
+            if self.runtime.capability_delegation.tool_names.is_empty() {
+                anyhow::bail!(
+                    "runtime.capability_delegation.tool_names must not be empty when capability delegation is enabled"
+                );
+            }
+
+            const ALLOWED_CAPABILITY_DELEGATION_TOOLS: [&str; 7] = [
+                "shell",
+                "file_read",
+                "file_write",
+                "file_edit",
+                "glob_search",
+                "content_search",
+                "git_operations",
+            ];
+            for name in &self.runtime.capability_delegation.tool_names {
+                let trimmed_name = name.trim();
+                if trimmed_name.is_empty() {
+                    anyhow::bail!(
+                        "runtime.capability_delegation.tool_names must not contain empty entries"
+                    );
+                }
+                if !ALLOWED_CAPABILITY_DELEGATION_TOOLS.contains(&trimmed_name) {
+                    anyhow::bail!(
+                        "runtime.capability_delegation.tool_names contains unsupported tool '{trimmed_name}'"
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -11203,6 +11292,19 @@ mod tests {
         assert!(!r.wasm.allow_workspace_read);
         assert!(!r.wasm.allow_workspace_write);
         assert!(r.wasm.allowed_hosts.is_empty());
+        assert!(r.capability_delegation.agent.is_none());
+        assert_eq!(
+            r.capability_delegation.tool_names,
+            vec![
+                "shell".to_string(),
+                "file_read".to_string(),
+                "file_write".to_string(),
+                "file_edit".to_string(),
+                "glob_search".to_string(),
+                "content_search".to_string(),
+                "git_operations".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -11231,6 +11333,87 @@ allowed_hosts = ["api.example.com"]
             parsed.runtime.wasm.allowed_hosts,
             vec!["api.example.com".to_string()]
         );
+    }
+
+    #[test]
+    async fn runtime_capability_delegation_parses_from_toml() {
+        let parsed = parse_test_config(
+            r#"
+[runtime]
+kind = "wasm"
+
+[runtime.capability_delegation]
+agent = "native_worker"
+tool_names = ["shell", "git_operations"]
+"#,
+        );
+
+        assert_eq!(parsed.runtime.kind, "wasm");
+        assert_eq!(
+            parsed.runtime.capability_delegation.agent.as_deref(),
+            Some("native_worker")
+        );
+        assert_eq!(
+            parsed.runtime.capability_delegation.tool_names,
+            vec!["shell".to_string(), "git_operations".to_string()]
+        );
+    }
+
+    fn test_delegate_agent_config() -> DelegateAgentConfig {
+        DelegateAgentConfig {
+            provider: "openrouter".to_string(),
+            model: "anthropic/claude-sonnet-4-20250514".to_string(),
+            system_prompt: None,
+            api_key: Some("delegate-test-credential".to_string()),
+            temperature: None,
+            max_depth: 3,
+            agentic: true,
+            allowed_tools: vec!["shell".to_string()],
+            max_iterations: 4,
+            timeout_secs: None,
+            agentic_timeout_secs: None,
+        }
+    }
+
+    #[test]
+    async fn config_validate_rejects_unknown_runtime_capability_delegate_agent() {
+        let mut cfg = Config::default();
+        cfg.runtime.capability_delegation.agent = Some("missing_agent".to_string());
+        let err = cfg
+            .validate()
+            .expect_err("unknown capability-delegation agent should fail validation");
+        assert!(err
+            .to_string()
+            .contains("runtime.capability_delegation.agent references unknown agent"));
+    }
+
+    #[test]
+    async fn config_validate_rejects_invalid_runtime_capability_delegate_tool_name() {
+        let mut cfg = Config::default();
+        cfg.agents
+            .insert("native_worker".to_string(), test_delegate_agent_config());
+        cfg.runtime.capability_delegation.agent = Some("native_worker".to_string());
+        cfg.runtime.capability_delegation.tool_names = vec!["invalid_tool".to_string()];
+        let err = cfg
+            .validate()
+            .expect_err("invalid capability-delegation tool name should fail validation");
+        assert!(err
+            .to_string()
+            .contains("runtime.capability_delegation.tool_names contains unsupported tool"));
+    }
+
+    #[test]
+    async fn config_validate_accepts_runtime_capability_delegation_with_known_agent() {
+        let mut cfg = Config::default();
+        cfg.agents
+            .insert("native_worker".to_string(), test_delegate_agent_config());
+        cfg.runtime.capability_delegation.agent = Some("native_worker".to_string());
+        cfg.runtime.capability_delegation.tool_names = vec![
+            "shell".to_string(),
+            "file_read".to_string(),
+            "git_operations".to_string(),
+        ];
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

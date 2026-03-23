@@ -21,9 +21,7 @@ pub mod browser;
 pub mod browser_delegate;
 pub mod browser_open;
 pub mod calculator;
-pub mod canvas;
-pub mod claude_code;
-pub mod claude_code_runner;
+pub mod capability_delegate;
 pub mod cli_discovery;
 pub mod cloud_ops;
 pub mod cloud_patterns;
@@ -119,9 +117,7 @@ pub use browser::{BrowserTool, ComputerUseConfig};
 pub use browser_delegate::{BrowserDelegateConfig, BrowserDelegateTool};
 pub use browser_open::BrowserOpenTool;
 pub use calculator::CalculatorTool;
-pub use canvas::{CanvasStore, CanvasTool};
-pub use claude_code::ClaudeCodeTool;
-pub use claude_code_runner::ClaudeCodeRunnerTool;
+pub use capability_delegate::CapabilityDelegatingTool;
 pub use cloud_ops::CloudOpsTool;
 pub use cloud_patterns::CloudPatternsTool;
 pub use codex_cli::CodexCliTool;
@@ -283,6 +279,114 @@ fn register_tool_with_runtime_requirements(
         missing = %missing_caps,
         "Skipped tool registration because runtime capabilities are missing"
     );
+}
+
+fn runtime_capability_delegate_tool_requirements(
+    tool_name: &str,
+) -> Option<&'static [RuntimeCapability]> {
+    match tool_name {
+        "shell" => Some(&[RuntimeCapability::Shell]),
+        "file_read" | "file_write" | "file_edit" | "glob_search" => {
+            Some(&[RuntimeCapability::Filesystem])
+        }
+        "content_search" | "git_operations" => {
+            Some(&[RuntimeCapability::Shell, RuntimeCapability::Filesystem])
+        }
+        _ => None,
+    }
+}
+
+fn build_runtime_capability_delegate_source_tool(
+    tool_name: &str,
+    security: Arc<SecurityPolicy>,
+    runtime: Arc<dyn RuntimeAdapter>,
+    sandbox: Arc<dyn crate::security::Sandbox>,
+    workspace_dir: &std::path::Path,
+) -> Option<Arc<dyn Tool>> {
+    match tool_name {
+        "shell" => Some(Arc::new(ShellTool::new_with_sandbox(
+            security, runtime, sandbox,
+        ))),
+        "file_read" => Some(Arc::new(FileReadTool::new(security))),
+        "file_write" => Some(Arc::new(FileWriteTool::new(security))),
+        "file_edit" => Some(Arc::new(FileEditTool::new(security))),
+        "glob_search" => Some(Arc::new(GlobSearchTool::new(security))),
+        "content_search" => Some(Arc::new(ContentSearchTool::new(security))),
+        "git_operations" => Some(Arc::new(GitOperationsTool::new(
+            security,
+            workspace_dir.to_path_buf(),
+        ))),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn register_runtime_capability_delegates(
+    tool_arcs: &mut Vec<Arc<dyn Tool>>,
+    runtime_caps: &HashSet<RuntimeCapability>,
+    security: Arc<SecurityPolicy>,
+    runtime: Arc<dyn RuntimeAdapter>,
+    sandbox: Arc<dyn crate::security::Sandbox>,
+    workspace_dir: &std::path::Path,
+    delegate_tool: Arc<dyn Tool>,
+    capability_delegation: &crate::config::RuntimeCapabilityDelegationConfig,
+) {
+    let Some(agent_name) = capability_delegation.agent.as_deref() else {
+        return;
+    };
+    let agent_name = agent_name.trim();
+    if agent_name.is_empty() {
+        return;
+    }
+
+    let mut existing: HashSet<String> = tool_arcs
+        .iter()
+        .map(|tool| tool.name().to_string())
+        .collect();
+    for tool_name in &capability_delegation.tool_names {
+        let tool_name = tool_name.trim();
+        if tool_name.is_empty() {
+            continue;
+        }
+
+        if existing.contains(tool_name) {
+            continue;
+        }
+
+        let Some(required_caps) = runtime_capability_delegate_tool_requirements(tool_name) else {
+            tracing::warn!(
+                tool = tool_name,
+                "runtime capability delegation: unsupported tool name"
+            );
+            continue;
+        };
+        if missing_runtime_capabilities(runtime_caps, required_caps).is_empty() {
+            continue;
+        }
+
+        let Some(source_tool) = build_runtime_capability_delegate_source_tool(
+            tool_name,
+            security.clone(),
+            runtime.clone(),
+            sandbox.clone(),
+            workspace_dir,
+        ) else {
+            continue;
+        };
+
+        let proxy = Arc::new(CapabilityDelegatingTool::new(
+            source_tool,
+            agent_name.to_string(),
+            delegate_tool.clone(),
+        ));
+        tracing::info!(
+            tool = tool_name,
+            agent = agent_name,
+            "Registered runtime capability-fallback delegation proxy"
+        );
+        tool_arcs.push(proxy);
+        existing.insert(tool_name.to_string());
+    }
 }
 
 /// Thin wrapper that makes an `Arc<dyn Tool>` usable as `Box<dyn Tool>`.
@@ -469,7 +573,7 @@ pub fn all_tools_with_runtime(
         Arc::new(ShellTool::new_with_sandbox(
             security.clone(),
             runtime.clone(),
-            sandbox,
+            sandbox.clone(),
         )),
         &runtime_caps,
         &[RuntimeCapability::Shell],
@@ -972,6 +1076,7 @@ pub fn all_tools_with_runtime(
         api_path: root_config.api_path.clone(),
     };
 
+    let mut capability_delegate_tool: Option<Arc<dyn Tool>> = None;
     let delegate_handle: Option<DelegateParentToolsHandle> = if agents.is_empty() {
         None
     } else {
@@ -980,19 +1085,34 @@ pub fn all_tools_with_runtime(
             .map(|(name, cfg)| (name.clone(), cfg.clone()))
             .collect();
         let parent_tools = Arc::new(RwLock::new(tool_arcs.clone()));
-        let delegate_tool = DelegateTool::new_with_options(
-            delegate_agents,
-            delegate_fallback_credential.clone(),
-            security.clone(),
-            provider_runtime_options.clone(),
-        )
-        .with_parent_tools(Arc::clone(&parent_tools))
-        .with_multimodal_config(root_config.multimodal.clone())
-        .with_delegate_config(root_config.delegate.clone())
-        .with_workspace_dir(workspace_dir.to_path_buf());
-        tool_arcs.push(Arc::new(delegate_tool));
+        let delegate_tool = Arc::new(
+            DelegateTool::new_with_options(
+                delegate_agents,
+                delegate_fallback_credential.clone(),
+                security.clone(),
+                provider_runtime_options.clone(),
+            )
+            .with_parent_tools(Arc::clone(&parent_tools))
+            .with_multimodal_config(root_config.multimodal.clone())
+            .with_delegate_config(root_config.delegate.clone()),
+        );
+        capability_delegate_tool = Some(delegate_tool.clone());
+        tool_arcs.push(delegate_tool as Arc<dyn Tool>);
         Some(parent_tools)
     };
+
+    if let Some(delegate_tool) = capability_delegate_tool {
+        register_runtime_capability_delegates(
+            &mut tool_arcs,
+            &runtime_caps,
+            security.clone(),
+            runtime.clone(),
+            sandbox.clone(),
+            workspace_dir,
+            delegate_tool,
+            &root_config.runtime.capability_delegation,
+        );
+    }
 
     // Add swarm tool when swarms are configured
     if !root_config.swarms.is_empty() {
@@ -1607,5 +1727,121 @@ mod tests {
         assert!(names.contains(&"schedule"));
         assert!(names.contains(&"calculator"));
         assert!(names.contains(&"browser_open"));
+    }
+
+    #[test]
+    fn all_tools_with_runtime_registers_filesystem_tools_without_shell() {
+        let tmp = TempDir::new().unwrap();
+        let security = Arc::new(SecurityPolicy::default());
+        let mem = markdown_memory(&tmp);
+        let browser = BrowserConfig {
+            enabled: true,
+            allowed_domains: vec!["example.com".into()],
+            session_name: None,
+            ..BrowserConfig::default()
+        };
+        let http = crate::config::HttpRequestConfig::default();
+        let mut cfg = test_config(&tmp);
+        cfg.text_browser.enabled = true;
+        cfg.google_workspace.enabled = true;
+        cfg.browser_delegate.enabled = true;
+        cfg.skills.prompt_injection_mode = crate::config::SkillsPromptInjectionMode::Compact;
+
+        let runtime: Arc<dyn RuntimeAdapter> = Arc::new(CapabilityTestRuntime::new(false, true));
+        let (tools, _) = all_tools_with_runtime(
+            Arc::new(cfg.clone()),
+            &security,
+            runtime,
+            mem,
+            None,
+            None,
+            &browser,
+            &http,
+            &crate::config::WebFetchConfig::default(),
+            tmp.path(),
+            &HashMap::new(),
+            None,
+            &cfg,
+        );
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+
+        assert!(!names.contains(&"shell"));
+        assert!(!names.contains(&"content_search"));
+        assert!(!names.contains(&"text_browser"));
+        assert!(!names.contains(&"google_workspace"));
+        assert!(!names.contains(&"browser_delegate"));
+        assert!(!names.contains(&"git_operations"));
+
+        assert!(names.contains(&"file_read"));
+        assert!(names.contains(&"file_write"));
+        assert!(names.contains(&"file_edit"));
+        assert!(names.contains(&"glob_search"));
+        assert!(names.contains(&"pushover"));
+        assert!(names.contains(&"read_skill"));
+        assert!(names.contains(&"pdf_read"));
+        assert!(names.contains(&"screenshot"));
+        assert!(names.contains(&"image_info"));
+        assert!(names.contains(&"browser_open"));
+    }
+
+    #[test]
+    fn all_tools_with_runtime_registers_capability_delegation_proxies_when_configured() {
+        let tmp = TempDir::new().unwrap();
+        let security = Arc::new(SecurityPolicy::default());
+        let mem = markdown_memory(&tmp);
+        let browser = BrowserConfig::default();
+        let http = crate::config::HttpRequestConfig::default();
+        let mut cfg = test_config(&tmp);
+        cfg.runtime.capability_delegation.agent = Some("native_worker".to_string());
+        cfg.runtime.capability_delegation.tool_names = vec![
+            "shell".to_string(),
+            "file_read".to_string(),
+            "git_operations".to_string(),
+        ];
+
+        let mut agents = HashMap::new();
+        agents.insert(
+            "native_worker".to_string(),
+            DelegateAgentConfig {
+                provider: "openrouter".to_string(),
+                model: "anthropic/claude-sonnet-4-20250514".to_string(),
+                system_prompt: None,
+                api_key: Some("delegate-test-credential".to_string()),
+                temperature: None,
+                max_depth: 3,
+                agentic: true,
+                allowed_tools: vec![
+                    "shell".to_string(),
+                    "file_read".to_string(),
+                    "git_operations".to_string(),
+                ],
+                max_iterations: 4,
+                timeout_secs: None,
+                agentic_timeout_secs: None,
+            },
+        );
+
+        let runtime: Arc<dyn RuntimeAdapter> = Arc::new(CapabilityTestRuntime::new(false, false));
+        let (tools, _) = all_tools_with_runtime(
+            Arc::new(cfg.clone()),
+            &security,
+            runtime,
+            mem,
+            None,
+            None,
+            &browser,
+            &http,
+            &crate::config::WebFetchConfig::default(),
+            tmp.path(),
+            &agents,
+            Some("delegate-test-credential"),
+            &cfg,
+        );
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+
+        assert!(names.contains(&"delegate"));
+        assert!(names.contains(&"shell"));
+        assert!(names.contains(&"file_read"));
+        assert!(names.contains(&"git_operations"));
     }
 }
