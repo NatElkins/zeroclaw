@@ -5,27 +5,11 @@ This playbook defines how ZeroClaw evaluates canary safety before changing edge 
 ## Scope In This PR
 
 - Typed canary state machine in `crates/zeroclaw-edge/src/canary.rs`.
-- Canary orchestrator in `crates/zeroclaw-edge/src/canary_orchestrator.rs`:
-  - metrics source interface
-  - traffic split client interface
-  - event sink interface (including memory-backed sink)
-- Cloudflare Wrangler traffic client adapter in `crates/zeroclaw-edge/src/cloudflare_cli.rs`:
-  - typed command construction for `wrangler versions deploy`
-  - support for direct `wrangler` and wrapped `npx wrangler` invocation
-  - deterministic unit coverage for promote/rollback/error command paths
-- Live orchestrator wiring in `crates/zeroclaw-edge/src/canary_live.rs`:
-  - typed assembly from controller + metrics source + event sink to Wrangler traffic client
-  - deterministic wiring coverage using injected command runner
-- Telemetry/runtime integration:
-  - `crates/zeroclaw-edge/src/canary_metrics.rs` (`curl` JSON metrics source)
-  - `crates/zeroclaw-edge/src/canary_tick.rs` (one-shot runtime path)
-  - integration-style tests cover: local telemetry HTTP server -> canary decision -> traffic split apply command
 - Deterministic CI gate:
   - `./scripts/ci/cloudflare_canary_check.sh`
 - WASM portability check included in canary gate.
 
-This PR does **not** yet run autonomous scheduled production canary loops.
-It now includes the one-shot runtime execution path, so the remaining work is scheduler wiring and production rollout policy operations.
+This PR does **not** yet perform live Cloudflare API traffic updates. It establishes the rollout decision contract that live control-plane wiring will consume.
 
 ## Rollout Inputs
 
@@ -67,13 +51,12 @@ Run:
 This validates:
 
 1. canary invariants and state-machine behavior
-2. canary orchestration behavior (hold/promote/rollback/apply/persist)
-3. wasm32 compile viability for `zeroclaw-edge`
-4. one-shot telemetry/runtime integration behavior
+2. wasm32 compile viability for `zeroclaw-edge`
 
-## Intended Next Step
+## Intended Live Wiring (Next Step)
 
-1. Trigger one-shot tick on a schedule (Cron trigger or external scheduler).
-2. Feed production telemetry endpoint into `CurlCanaryMetricsSource`.
-3. Execute `run_cloudflare_one_shot_canary_tick(...)` each interval.
-4. Persist decision/audit events for postmortems and rollback drills.
+1. Pull interval metrics from edge telemetry.
+2. Feed metrics into `CanaryController::observe(...)`.
+3. On `Promote`, update Cloudflare version traffic split.
+4. On `Rollback`, shift traffic to stable version immediately.
+5. Persist decision/audit events for postmortems.
