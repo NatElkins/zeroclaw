@@ -205,10 +205,9 @@ probe-rs = { version = "0.31", optional = true }
 pdf-extract = { version = "0.10", optional = true }
 
 # WASM plugin runtime (extism)
-extism = { version = "1.20", optional = true }
-
-# Cross-platform audio capture for voice wake word detection (optional, enable with --features voice-wake)
-cpal = { version = "0.15", optional = true }
+extism = { version = "1.9", optional = true }
+# WASM runtime sandbox engine (used by runtime.kind = "wasm")
+wasmi = { version = "0.40", optional = true }
 
 # Terminal QR rendering for WhatsApp Web pairing flow.
 qrcode = { version = "0.14", optional = true }
@@ -264,31 +263,8 @@ whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-pr
 voice-wake = ["dep:cpal"]
 # WASM plugin system (extism-based)
 plugins-wasm = ["dep:extism"]
-# WebAuthn / FIDO2 hardware key authentication
-webauthn = []
-# Meta-feature for CI: all features except those requiring system C libraries
-# not available on standard CI runners (e.g., voice-wake needs libasound2-dev).
-ci-all = [
-    "channel-nostr",
-    "hardware",
-    "channel-matrix",
-    "channel-lark",
-    "observability-prometheus",
-    "observability-otel",
-    "peripheral-rpi",
-    "browser-native",
-    "sandbox-landlock",
-    "sandbox-bubblewrap",
-    "probe",
-    "rag-pdf",
-    "skill-creation",
-    "whatsapp-web",
-    "plugins-wasm",
-]
-
-[profile.dev]
-incremental = true
-opt-level = 1
+# WASM runtime adapter (feature-gated to avoid default binary size/regression impact)
+runtime-wasm = ["dep:wasmi"]
 
 [profile.release]
 opt-level = "z"      # Optimize for size
