@@ -5,6 +5,10 @@ This playbook defines how ZeroClaw evaluates canary safety before changing edge 
 ## Scope In This PR
 
 - Typed canary state machine in `crates/zeroclaw-edge/src/canary.rs`.
+- Canary orchestrator in `crates/zeroclaw-edge/src/canary_orchestrator.rs`:
+  - metrics source interface
+  - traffic split client interface
+  - event sink interface (including memory-backed sink)
 - Deterministic CI gate:
   - `./scripts/ci/cloudflare_canary_check.sh`
 - WASM portability check included in canary gate.
@@ -40,6 +44,15 @@ Rollback triggers:
 - error rate over threshold
 - p95 latency over threshold
 
+## Orchestration Tick
+
+Each canary tick performs:
+
+1. Fetch current metrics window.
+2. Evaluate decision via `CanaryController`.
+3. If needed, apply traffic split update (`Promote`, `Rollback`, `Complete`).
+4. Record tick outcome for auditing/observability.
+
 ## Local Validation
 
 Run:
@@ -51,7 +64,8 @@ Run:
 This validates:
 
 1. canary invariants and state-machine behavior
-2. wasm32 compile viability for `zeroclaw-edge`
+2. canary orchestration behavior (hold/promote/rollback/apply/persist)
+3. wasm32 compile viability for `zeroclaw-edge`
 
 ## Intended Live Wiring (Next Step)
 

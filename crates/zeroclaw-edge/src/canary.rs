@@ -23,6 +23,35 @@ impl Percent {
     }
 }
 
+/// Traffic percentage in the inclusive range `[0, 100]`.
+///
+/// Unlike [`Percent`], `0` is valid here because canary rollback can route all
+/// traffic back to the stable deployment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TrafficPercent(u8);
+
+impl TrafficPercent {
+    pub const ZERO: Self = Self(0);
+    pub const FULL: Self = Self(100);
+
+    pub fn new(value: u8) -> Result<Self, CanaryConfigError> {
+        if value > 100 {
+            return Err(CanaryConfigError::TrafficPercentOutOfRange { value });
+        }
+        Ok(Self(value))
+    }
+
+    pub fn get(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<Percent> for TrafficPercent {
+    fn from(value: Percent) -> Self {
+        Self(value.get())
+    }
+}
+
 /// Rate encoded as basis points (`0..=10_000`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BasisPoints(u16);
@@ -324,14 +353,14 @@ impl CanaryController {
 pub struct CloudflareTrafficUpdate {
     stable_version_id: String,
     canary_version_id: String,
-    canary_traffic: Percent,
+    canary_traffic: TrafficPercent,
 }
 
 impl CloudflareTrafficUpdate {
     pub fn new(
         stable_version_id: impl Into<String>,
         canary_version_id: impl Into<String>,
-        canary_traffic: Percent,
+        canary_traffic: TrafficPercent,
     ) -> Result<Self, CanaryConfigError> {
         let stable_version_id = stable_version_id.into();
         let canary_version_id = canary_version_id.into();
@@ -358,7 +387,7 @@ impl CloudflareTrafficUpdate {
         &self.canary_version_id
     }
 
-    pub fn canary_traffic(&self) -> Percent {
+    pub fn canary_traffic(&self) -> TrafficPercent {
         self.canary_traffic
     }
 
@@ -370,6 +399,7 @@ impl CloudflareTrafficUpdate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CanaryConfigError {
     PercentOutOfRange { value: u8 },
+    TrafficPercentOutOfRange { value: u8 },
     BasisPointsOutOfRange { value: u16 },
     EmptyStages,
     StagesMustIncrease { current: u8, next: u8 },
@@ -383,6 +413,9 @@ impl fmt::Display for CanaryConfigError {
         match self {
             Self::PercentOutOfRange { value } => {
                 write!(f, "percent out of range [1, 100]: {value}")
+            }
+            Self::TrafficPercentOutOfRange { value } => {
+                write!(f, "traffic percent out of range [0, 100]: {value}")
             }
             Self::BasisPointsOutOfRange { value } => {
                 write!(f, "basis points out of range [0, 10000]: {value}")
@@ -632,23 +665,38 @@ mod tests {
     #[test]
     fn cloudflare_traffic_update_rejects_empty_version_ids() {
         let invalid_stable =
-            CloudflareTrafficUpdate::new("", "canary-v1", Percent::new(5).unwrap()).unwrap_err();
+            CloudflareTrafficUpdate::new("", "canary-v1", TrafficPercent::new(5).unwrap())
+                .unwrap_err();
         assert_eq!(invalid_stable, CanaryConfigError::EmptyStableVersionId);
 
         let invalid_canary =
-            CloudflareTrafficUpdate::new("stable-v1", " ", Percent::new(5).unwrap()).unwrap_err();
+            CloudflareTrafficUpdate::new("stable-v1", " ", TrafficPercent::new(5).unwrap())
+                .unwrap_err();
         assert_eq!(invalid_canary, CanaryConfigError::EmptyCanaryVersionId);
     }
 
     #[test]
     fn cloudflare_traffic_update_computes_stable_share() {
-        let update =
-            CloudflareTrafficUpdate::new("stable-v1", "canary-v2", Percent::new(25).unwrap())
-                .unwrap();
+        let update = CloudflareTrafficUpdate::new(
+            "stable-v1",
+            "canary-v2",
+            TrafficPercent::new(25).unwrap(),
+        )
+        .unwrap();
 
         assert_eq!(update.stable_version_id(), "stable-v1");
         assert_eq!(update.canary_version_id(), "canary-v2");
         assert_eq!(update.canary_traffic().get(), 25);
         assert_eq!(update.stable_traffic_percent(), 75);
+    }
+
+    #[test]
+    fn traffic_percent_supports_rollback_zero_and_rejects_overflow() {
+        assert_eq!(TrafficPercent::ZERO.get(), 0);
+        assert_eq!(TrafficPercent::FULL.get(), 100);
+        assert_eq!(
+            TrafficPercent::new(101).unwrap_err(),
+            CanaryConfigError::TrafficPercentOutOfRange { value: 101 }
+        );
     }
 }
