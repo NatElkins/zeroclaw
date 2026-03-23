@@ -5,11 +5,20 @@ This playbook defines how ZeroClaw evaluates canary safety before changing edge 
 ## Scope In This PR
 
 - Typed canary state machine in `crates/zeroclaw-edge/src/canary.rs`.
+- Canary orchestrator in `crates/zeroclaw-edge/src/canary_orchestrator.rs`:
+  - metrics source interface
+  - traffic split client interface
+  - event sink interface (including memory-backed sink)
+- Cloudflare Wrangler traffic client adapter in `crates/zeroclaw-edge/src/cloudflare_cli.rs`:
+  - typed command construction for `wrangler versions deploy`
+  - support for direct `wrangler` and wrapped `npx wrangler` invocation
+  - deterministic unit coverage for promote/rollback/error command paths
 - Deterministic CI gate:
   - `./scripts/ci/cloudflare_canary_check.sh`
 - WASM portability check included in canary gate.
 
-This PR does **not** yet perform live Cloudflare API traffic updates. It establishes the rollout decision contract that live control-plane wiring will consume.
+This PR does **not** yet run autonomous production canary loops against live Cloudflare traffic.
+It establishes the rollout decision contract and CLI adapter that production control-plane wiring will consume.
 
 ## Rollout Inputs
 
