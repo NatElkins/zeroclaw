@@ -9,16 +9,6 @@
 //! delegation/persistence assumptions early.
 
 pub mod canary;
-pub mod canary_cron;
-pub mod canary_live;
-pub mod canary_metrics;
-pub mod canary_orchestrator;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod canary_schedule;
-pub mod canary_tick;
-pub mod cloudflare_cli;
-pub mod cloudflare_deploy_api;
-pub mod delegate_http;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
