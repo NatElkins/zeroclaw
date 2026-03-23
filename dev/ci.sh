@@ -86,6 +86,7 @@ Commands:
   test-live       Run live tests (requires credentials)
   test-wasm-runtime Run wasm runtime feature tests
   test-edge-spike Run edge spike tests + wasm32 compile check
+  test-cloudflare-canary Run typed canary rollout checks + wasm32 portability
   test-hybrid-local Run local hybrid readiness suite (component+integration+system+shell+delegate+wasm)
   test-hybrid-services Run service-backed hybrid suite (Postgres + wasm runtime + remote memory)
   test-manual     Run manual test scripts (dockerignore, etc.)
@@ -153,6 +154,10 @@ case "$1" in
     run_in_ci "./scripts/ci/edge_wasm_spike_check.sh"
     ;;
 
+  test-cloudflare-canary)
+    run_in_ci "./scripts/ci/cloudflare_canary_check.sh"
+    ;;
+
   test-hybrid-local)
     run_in_ci "cargo test --test component --locked --verbose"
     run_in_ci "cargo test --test integration --locked --verbose"
@@ -162,6 +167,7 @@ case "$1" in
     run_in_ci "cargo test --features runtime-wasm runtime::tests::factory_wasm --locked --verbose"
     run_in_ci "cargo test --features runtime-wasm runtime::wasm::tests:: --locked --verbose"
     run_in_ci "./scripts/ci/edge_wasm_spike_check.sh"
+    run_in_ci "./scripts/ci/cloudflare_canary_check.sh"
     ;;
 
   test-hybrid-services)

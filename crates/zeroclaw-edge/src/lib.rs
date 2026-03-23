@@ -8,6 +8,8 @@
 //! It is intentionally narrow so we can validate wasm32 portability and hybrid
 //! delegation/persistence assumptions early.
 
+pub mod canary;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
