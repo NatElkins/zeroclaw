@@ -217,12 +217,73 @@ use crate::runtime::{NativeRuntime, RuntimeAdapter};
 use crate::security::{create_sandbox, SecurityPolicy};
 use async_trait::async_trait;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Shared handle to the delegate tool's parent-tools list.
 /// Callers can push additional tools (e.g. MCP wrappers) after construction.
 pub type DelegateParentToolsHandle = Arc<RwLock<Vec<Arc<dyn Tool>>>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum RuntimeCapability {
+    Shell,
+    Filesystem,
+}
+
+impl RuntimeCapability {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Shell => "shell",
+            Self::Filesystem => "filesystem",
+        }
+    }
+}
+
+fn runtime_capabilities(runtime: &dyn RuntimeAdapter) -> HashSet<RuntimeCapability> {
+    let mut caps = HashSet::new();
+    if runtime.has_shell_access() {
+        caps.insert(RuntimeCapability::Shell);
+    }
+    if runtime.has_filesystem_access() {
+        caps.insert(RuntimeCapability::Filesystem);
+    }
+    caps
+}
+
+fn missing_runtime_capabilities(
+    available: &HashSet<RuntimeCapability>,
+    required: &[RuntimeCapability],
+) -> Vec<RuntimeCapability> {
+    required
+        .iter()
+        .copied()
+        .filter(|cap| !available.contains(cap))
+        .collect()
+}
+
+fn register_tool_with_runtime_requirements(
+    tool_arcs: &mut Vec<Arc<dyn Tool>>,
+    tool: Arc<dyn Tool>,
+    available: &HashSet<RuntimeCapability>,
+    required: &[RuntimeCapability],
+) {
+    let missing = missing_runtime_capabilities(available, required);
+    if missing.is_empty() {
+        tool_arcs.push(tool);
+        return;
+    }
+
+    let missing_caps = missing
+        .iter()
+        .map(|cap| cap.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    tracing::warn!(
+        tool = %tool.name(),
+        missing = %missing_caps,
+        "Skipped tool registration because runtime capabilities are missing"
+    );
+}
 
 /// Thin wrapper that makes an `Arc<dyn Tool>` usable as `Box<dyn Tool>`.
 pub struct ArcToolRef(pub Arc<dyn Tool>);
@@ -290,14 +351,45 @@ pub fn default_tools_with_runtime(
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
 ) -> Vec<Box<dyn Tool>> {
-    vec![
-        Box::new(ShellTool::new(security.clone(), runtime)),
-        Box::new(FileReadTool::new(security.clone())),
-        Box::new(FileWriteTool::new(security.clone())),
-        Box::new(FileEditTool::new(security.clone())),
-        Box::new(GlobSearchTool::new(security.clone())),
-        Box::new(ContentSearchTool::new(security)),
-    ]
+    let caps = runtime_capabilities(runtime.as_ref());
+    let mut tools: Vec<Arc<dyn Tool>> = Vec::new();
+    register_tool_with_runtime_requirements(
+        &mut tools,
+        Arc::new(ShellTool::new(security.clone(), runtime)),
+        &caps,
+        &[RuntimeCapability::Shell],
+    );
+    register_tool_with_runtime_requirements(
+        &mut tools,
+        Arc::new(FileReadTool::new(security.clone())),
+        &caps,
+        &[RuntimeCapability::Filesystem],
+    );
+    register_tool_with_runtime_requirements(
+        &mut tools,
+        Arc::new(FileWriteTool::new(security.clone())),
+        &caps,
+        &[RuntimeCapability::Filesystem],
+    );
+    register_tool_with_runtime_requirements(
+        &mut tools,
+        Arc::new(FileEditTool::new(security.clone())),
+        &caps,
+        &[RuntimeCapability::Filesystem],
+    );
+    register_tool_with_runtime_requirements(
+        &mut tools,
+        Arc::new(GlobSearchTool::new(security.clone())),
+        &caps,
+        &[RuntimeCapability::Filesystem],
+    );
+    register_tool_with_runtime_requirements(
+        &mut tools,
+        Arc::new(ContentSearchTool::new(security)),
+        &caps,
+        &[RuntimeCapability::Shell, RuntimeCapability::Filesystem],
+    );
+    boxed_registry_from_arcs(tools)
 }
 
 /// Register skill-defined tools into an existing tool registry.
@@ -393,57 +485,102 @@ pub fn all_tools_with_runtime(
     agents: &HashMap<String, DelegateAgentConfig>,
     fallback_api_key: Option<&str>,
     root_config: &crate::config::Config,
-    canvas_store: Option<CanvasStore>,
-) -> (
-    Vec<Box<dyn Tool>>,
-    Option<DelegateParentToolsHandle>,
-    Option<ChannelMapHandle>,
-    ChannelMapHandle,
-    Option<ChannelMapHandle>,
-    Option<ChannelMapHandle>,
-) {
-    let has_shell_access = runtime.has_shell_access();
+) -> (Vec<Box<dyn Tool>>, Option<DelegateParentToolsHandle>) {
+    let runtime_caps = runtime_capabilities(runtime.as_ref());
+    let has_shell_access = runtime_caps.contains(&RuntimeCapability::Shell);
+    let has_filesystem_access = runtime_caps.contains(&RuntimeCapability::Filesystem);
     let sandbox = create_sandbox(&root_config.security);
-    let mut tool_arcs: Vec<Arc<dyn Tool>> = vec![
-        Arc::new(
-            ShellTool::new_with_sandbox(security.clone(), runtime, sandbox)
-                .with_timeout_secs(root_config.shell_tool.timeout_secs),
-        ),
-        Arc::new(FileReadTool::new(security.clone())),
-        Arc::new(FileWriteTool::new(security.clone())),
-        Arc::new(FileEditTool::new(security.clone())),
-        Arc::new(GlobSearchTool::new(security.clone())),
-        Arc::new(ContentSearchTool::new(security.clone())),
-        Arc::new(CronAddTool::new(config.clone(), security.clone())),
-        Arc::new(CronListTool::new(config.clone())),
-        Arc::new(CronRemoveTool::new(config.clone(), security.clone())),
-        Arc::new(CronUpdateTool::new(config.clone(), security.clone())),
-        Arc::new(CronRunTool::new(config.clone(), security.clone())),
-        Arc::new(CronRunsTool::new(config.clone())),
-        Arc::new(MemoryStoreTool::new(memory.clone(), security.clone())),
-        Arc::new(MemoryRecallTool::new(memory.clone())),
-        Arc::new(MemoryForgetTool::new(memory.clone(), security.clone())),
-        Arc::new(MemoryExportTool::new(memory.clone())),
-        Arc::new(MemoryPurgeTool::new(memory, security.clone())),
-        Arc::new(ScheduleTool::new(security.clone(), root_config.clone())),
-        Arc::new(ModelRoutingConfigTool::new(
-            config.clone(),
+    let mut tool_arcs: Vec<Arc<dyn Tool>> = Vec::new();
+    register_tool_with_runtime_requirements(
+        &mut tool_arcs,
+        Arc::new(ShellTool::new_with_sandbox(
             security.clone(),
+            runtime.clone(),
+            sandbox,
         )),
-        Arc::new(ModelSwitchTool::new(security.clone())),
-        Arc::new(ProxyConfigTool::new(config.clone(), security.clone())),
+        &runtime_caps,
+        &[RuntimeCapability::Shell],
+    );
+    register_tool_with_runtime_requirements(
+        &mut tool_arcs,
+        Arc::new(FileReadTool::new(security.clone())),
+        &runtime_caps,
+        &[RuntimeCapability::Filesystem],
+    );
+    register_tool_with_runtime_requirements(
+        &mut tool_arcs,
+        Arc::new(FileWriteTool::new(security.clone())),
+        &runtime_caps,
+        &[RuntimeCapability::Filesystem],
+    );
+    register_tool_with_runtime_requirements(
+        &mut tool_arcs,
+        Arc::new(FileEditTool::new(security.clone())),
+        &runtime_caps,
+        &[RuntimeCapability::Filesystem],
+    );
+    register_tool_with_runtime_requirements(
+        &mut tool_arcs,
+        Arc::new(GlobSearchTool::new(security.clone())),
+        &runtime_caps,
+        &[RuntimeCapability::Filesystem],
+    );
+    register_tool_with_runtime_requirements(
+        &mut tool_arcs,
+        Arc::new(ContentSearchTool::new(security.clone())),
+        &runtime_caps,
+        &[RuntimeCapability::Shell, RuntimeCapability::Filesystem],
+    );
+    tool_arcs.push(Arc::new(CronAddTool::new(config.clone(), security.clone())));
+    tool_arcs.push(Arc::new(CronListTool::new(config.clone())));
+    tool_arcs.push(Arc::new(CronRemoveTool::new(
+        config.clone(),
+        security.clone(),
+    )));
+    tool_arcs.push(Arc::new(CronUpdateTool::new(
+        config.clone(),
+        security.clone(),
+    )));
+    tool_arcs.push(Arc::new(CronRunTool::new(config.clone(), security.clone())));
+    tool_arcs.push(Arc::new(CronRunsTool::new(config.clone())));
+    tool_arcs.push(Arc::new(MemoryStoreTool::new(
+        memory.clone(),
+        security.clone(),
+    )));
+    tool_arcs.push(Arc::new(MemoryRecallTool::new(memory.clone())));
+    tool_arcs.push(Arc::new(MemoryForgetTool::new(memory, security.clone())));
+    tool_arcs.push(Arc::new(ScheduleTool::new(
+        security.clone(),
+        root_config.clone(),
+    )));
+    tool_arcs.push(Arc::new(ModelRoutingConfigTool::new(
+        config.clone(),
+        security.clone(),
+    )));
+    tool_arcs.push(Arc::new(ModelSwitchTool::new(security.clone())));
+    tool_arcs.push(Arc::new(ProxyConfigTool::new(
+        config.clone(),
+        security.clone(),
+    )));
+    register_tool_with_runtime_requirements(
+        &mut tool_arcs,
         Arc::new(GitOperationsTool::new(
             security.clone(),
             workspace_dir.to_path_buf(),
         )),
+        &runtime_caps,
+        &[RuntimeCapability::Shell, RuntimeCapability::Filesystem],
+    );
+    register_tool_with_runtime_requirements(
+        &mut tool_arcs,
         Arc::new(PushoverTool::new(
             security.clone(),
             workspace_dir.to_path_buf(),
         )),
-        Arc::new(CalculatorTool::new()),
-        Arc::new(WeatherTool::new()),
-        Arc::new(CanvasTool::new(canvas_store.unwrap_or_default())),
-    ];
+        &runtime_caps,
+        &[RuntimeCapability::Filesystem],
+    );
+    tool_arcs.push(Arc::new(CalculatorTool::new()));
 
     // Register discord_search if discord_history channel is configured
     if root_config.channels_config.discord_history.is_some() {
@@ -496,11 +633,16 @@ pub fn all_tools_with_runtime(
         root_config.skills.prompt_injection_mode,
         crate::config::SkillsPromptInjectionMode::Compact
     ) {
-        tool_arcs.push(Arc::new(ReadSkillTool::new(
-            workspace_dir.to_path_buf(),
-            root_config.skills.open_skills_enabled,
-            root_config.skills.open_skills_dir.clone(),
-        )));
+        register_tool_with_runtime_requirements(
+            &mut tool_arcs,
+            Arc::new(ReadSkillTool::new(
+                workspace_dir.to_path_buf(),
+                root_config.skills.open_skills_enabled,
+                root_config.skills.open_skills_dir.clone(),
+            )),
+            &runtime_caps,
+            &[RuntimeCapability::Filesystem],
+        );
     }
 
     if browser_config.enabled {
@@ -567,12 +709,14 @@ pub fn all_tools_with_runtime(
     }
 
     // Text browser tool (headless text-based browser rendering)
-    if root_config.text_browser.enabled {
+    if root_config.text_browser.enabled && has_shell_access {
         tool_arcs.push(Arc::new(TextBrowserTool::new(
             security.clone(),
             root_config.text_browser.preferred_browser.clone(),
             root_config.text_browser.timeout_secs,
         )));
+    } else if root_config.text_browser.enabled {
+        tracing::warn!("text_browser: skipped registration because shell access is unavailable");
     }
 
     // Web search tool (enabled by default for GLM and other models)
@@ -649,20 +793,26 @@ pub fn all_tools_with_runtime(
     }
 
     // Backup tool (enabled by default)
-    if root_config.backup.enabled {
+    if root_config.backup.enabled && has_filesystem_access {
         tool_arcs.push(Arc::new(BackupTool::new(
             workspace_dir.to_path_buf(),
             root_config.backup.include_dirs.clone(),
             root_config.backup.max_keep,
         )));
+    } else if root_config.backup.enabled {
+        tracing::warn!("backup: skipped registration because filesystem access is unavailable");
     }
 
     // Data management tool (disabled by default)
-    if root_config.data_retention.enabled {
+    if root_config.data_retention.enabled && has_filesystem_access {
         tool_arcs.push(Arc::new(DataManagementTool::new(
             workspace_dir.to_path_buf(),
             root_config.data_retention.retention_days,
         )));
+    } else if root_config.data_retention.enabled {
+        tracing::warn!(
+            "data_management: skipped registration because filesystem access is unavailable"
+        );
     }
 
     // Cloud operations advisory tools (read-only analysis)
@@ -735,11 +885,21 @@ pub fn all_tools_with_runtime(
     }
 
     // PDF extraction (feature-gated at compile time via rag-pdf)
-    tool_arcs.push(Arc::new(PdfReadTool::new(security.clone())));
+    if has_filesystem_access {
+        tool_arcs.push(Arc::new(PdfReadTool::new(security.clone())));
+    } else {
+        tracing::warn!("pdf_read: skipped registration because filesystem access is unavailable");
+    }
 
     // Vision tools are always available
-    tool_arcs.push(Arc::new(ScreenshotTool::new(security.clone())));
-    tool_arcs.push(Arc::new(ImageInfoTool::new(security.clone())));
+    if has_filesystem_access {
+        tool_arcs.push(Arc::new(ScreenshotTool::new(security.clone())));
+        tool_arcs.push(Arc::new(ImageInfoTool::new(security.clone())));
+    } else {
+        tracing::warn!(
+            "screenshot/image_info: skipped registration because filesystem access is unavailable"
+        );
+    }
 
     // Session-to-session messaging tools (always available when sessions dir exists)
     if let Ok(session_store) = crate::channels::session_store::SessionStore::new(workspace_dir) {
@@ -754,7 +914,7 @@ pub fn all_tools_with_runtime(
     }
 
     // LinkedIn integration (config-gated)
-    if root_config.linkedin.enabled {
+    if root_config.linkedin.enabled && has_filesystem_access {
         tool_arcs.push(Arc::new(LinkedInTool::new(
             security.clone(),
             workspace_dir.to_path_buf(),
@@ -762,6 +922,8 @@ pub fn all_tools_with_runtime(
             root_config.linkedin.content.clone(),
             root_config.linkedin.image.clone(),
         )));
+    } else if root_config.linkedin.enabled {
+        tracing::warn!("linkedin: skipped registration because filesystem access is unavailable");
     }
 
     // Standalone image generation tool (config-gated)
@@ -881,7 +1043,7 @@ pub fn all_tools_with_runtime(
     }
 
     // Knowledge graph tool
-    if root_config.knowledge.enabled {
+    if root_config.knowledge.enabled && has_filesystem_access {
         let db_path_str = root_config.knowledge.db_path.replace(
             '~',
             &directories::UserDirs::new()
@@ -900,6 +1062,8 @@ pub fn all_tools_with_runtime(
                 tracing::warn!("knowledge graph disabled due to init error: {e}");
             }
         }
+    } else if root_config.knowledge.enabled {
+        tracing::warn!("knowledge: skipped registration because filesystem access is unavailable");
     }
 
     // Add delegation tool when agents are configured
@@ -961,7 +1125,7 @@ pub fn all_tools_with_runtime(
     }
 
     // Workspace management tool (conditionally registered when workspace isolation is enabled)
-    if root_config.workspace.enabled {
+    if root_config.workspace.enabled && has_filesystem_access {
         let workspaces_dir = if root_config.workspace.workspaces_dir.starts_with("~/") {
             let home = directories::UserDirs::new()
                 .map(|u| u.home_dir().to_path_buf())
@@ -975,6 +1139,8 @@ pub fn all_tools_with_runtime(
             Arc::new(tokio::sync::RwLock::new(ws_manager)),
             security.clone(),
         )));
+    } else if root_config.workspace.enabled {
+        tracing::warn!("workspace: skipped registration because filesystem access is unavailable");
     }
 
     // Verifiable Intent tool (opt-in via config)
@@ -1059,6 +1225,7 @@ pub fn all_tools_with_runtime(
 mod tests {
     use super::*;
     use crate::config::{BrowserConfig, Config, MemoryConfig};
+    use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
     fn test_config(tmp: &TempDir) -> Config {
@@ -1069,11 +1236,100 @@ mod tests {
         }
     }
 
+    struct CapabilityTestRuntime {
+        shell: bool,
+        filesystem: bool,
+    }
+
+    impl CapabilityTestRuntime {
+        fn new(shell: bool, filesystem: bool) -> Self {
+            Self { shell, filesystem }
+        }
+    }
+
+    impl RuntimeAdapter for CapabilityTestRuntime {
+        fn name(&self) -> &str {
+            "capability-test"
+        }
+
+        fn has_shell_access(&self) -> bool {
+            self.shell
+        }
+
+        fn has_filesystem_access(&self) -> bool {
+            self.filesystem
+        }
+
+        fn storage_path(&self) -> PathBuf {
+            std::env::temp_dir().join("zeroclaw-capability-tests")
+        }
+
+        fn supports_long_running(&self) -> bool {
+            false
+        }
+
+        fn build_shell_command(
+            &self,
+            command: &str,
+            workspace_dir: &Path,
+        ) -> anyhow::Result<tokio::process::Command> {
+            if !self.shell {
+                anyhow::bail!("shell access disabled for capability-test runtime");
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                let mut process = tokio::process::Command::new("sh");
+                process.arg("-c").arg(command).current_dir(workspace_dir);
+                Ok(process)
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                let mut process = tokio::process::Command::new("cmd.exe");
+                process.arg("/C").arg(command).current_dir(workspace_dir);
+                Ok(process)
+            }
+        }
+    }
+
+    fn markdown_memory(tmp: &TempDir) -> Arc<dyn Memory> {
+        let mem_cfg = MemoryConfig {
+            backend: "markdown".into(),
+            ..MemoryConfig::default()
+        };
+        Arc::from(crate::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap())
+    }
+
     #[test]
     fn default_tools_has_expected_count() {
         let security = Arc::new(SecurityPolicy::default());
         let tools = default_tools(security);
         assert_eq!(tools.len(), 6);
+    }
+
+    #[test]
+    fn default_tools_with_runtime_skips_all_without_required_capabilities() {
+        let security = Arc::new(SecurityPolicy::default());
+        let runtime: Arc<dyn RuntimeAdapter> = Arc::new(CapabilityTestRuntime::new(false, false));
+        let tools = default_tools_with_runtime(security, runtime);
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn default_tools_with_runtime_registers_filesystem_tools_without_shell() {
+        let security = Arc::new(SecurityPolicy::default());
+        let runtime: Arc<dyn RuntimeAdapter> = Arc::new(CapabilityTestRuntime::new(false, true));
+        let tools = default_tools_with_runtime(security, runtime);
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+
+        assert!(!names.contains(&"shell"));
+        assert!(!names.contains(&"content_search"));
+        assert!(names.contains(&"file_read"));
+        assert!(names.contains(&"file_write"));
+        assert!(names.contains(&"file_edit"));
+        assert!(names.contains(&"glob_search"));
+        assert_eq!(names.len(), 4);
     }
 
     #[test]
@@ -1414,5 +1670,69 @@ mod tests {
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(!names.contains(&"read_skill"));
+    }
+
+    #[test]
+    fn all_tools_with_runtime_skips_shell_and_filesystem_tools_without_capabilities() {
+        let tmp = TempDir::new().unwrap();
+        let security = Arc::new(SecurityPolicy::default());
+        let mem = markdown_memory(&tmp);
+        let browser = BrowserConfig {
+            enabled: true,
+            allowed_domains: vec!["example.com".into()],
+            session_name: None,
+            ..BrowserConfig::default()
+        };
+        let http = crate::config::HttpRequestConfig::default();
+        let mut cfg = test_config(&tmp);
+        cfg.text_browser.enabled = true;
+        cfg.google_workspace.enabled = true;
+        cfg.backup.enabled = true;
+        cfg.data_retention.enabled = true;
+        cfg.workspace.enabled = true;
+        cfg.knowledge.enabled = true;
+        cfg.linkedin.enabled = true;
+        cfg.browser_delegate.enabled = true;
+        cfg.skills.prompt_injection_mode = crate::config::SkillsPromptInjectionMode::Compact;
+
+        let runtime: Arc<dyn RuntimeAdapter> = Arc::new(CapabilityTestRuntime::new(false, false));
+        let (tools, _) = all_tools_with_runtime(
+            Arc::new(cfg.clone()),
+            &security,
+            runtime,
+            mem,
+            None,
+            None,
+            &browser,
+            &http,
+            &crate::config::WebFetchConfig::default(),
+            tmp.path(),
+            &HashMap::new(),
+            None,
+            &cfg,
+        );
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+
+        assert!(!names.contains(&"shell"));
+        assert!(!names.contains(&"file_read"));
+        assert!(!names.contains(&"file_write"));
+        assert!(!names.contains(&"file_edit"));
+        assert!(!names.contains(&"glob_search"));
+        assert!(!names.contains(&"content_search"));
+        assert!(!names.contains(&"git_operations"));
+        assert!(!names.contains(&"pushover"));
+        assert!(!names.contains(&"read_skill"));
+        assert!(!names.contains(&"text_browser"));
+        assert!(!names.contains(&"google_workspace"));
+        assert!(!names.contains(&"browser_delegate"));
+        assert!(!names.contains(&"pdf_read"));
+        assert!(!names.contains(&"screenshot"));
+        assert!(!names.contains(&"image_info"));
+        assert!(!names.contains(&"workspace"));
+        assert!(!names.contains(&"knowledge"));
+        assert!(!names.contains(&"linkedin"));
+        assert!(names.contains(&"schedule"));
+        assert!(names.contains(&"calculator"));
+        assert!(names.contains(&"browser_open"));
     }
 }
