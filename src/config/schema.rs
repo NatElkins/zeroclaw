@@ -5466,7 +5466,7 @@ fn default_docker_cpu_limit() -> Option<f64> {
 }
 
 fn default_wasm_fuel_limit() -> u64 {
-    5_000_000
+    1_000_000
 }
 
 fn default_wasm_memory_limit_mb() -> u64 {
@@ -11151,7 +11151,7 @@ mod tests {
         assert_eq!(r.docker.cpu_limit, Some(1.0));
         assert!(r.docker.read_only_rootfs);
         assert!(r.docker.mount_workspace);
-        assert_eq!(r.wasm.fuel_limit, 5_000_000);
+        assert_eq!(r.wasm.fuel_limit, 1_000_000);
         assert_eq!(r.wasm.memory_limit_mb, 64);
         assert_eq!(r.wasm.tools_dir, "tools/wasm");
         assert!(!r.wasm.allow_workspace_read);
