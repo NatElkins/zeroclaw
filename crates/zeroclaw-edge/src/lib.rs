@@ -9,7 +9,6 @@
 //! delegation/persistence assumptions early.
 
 pub mod canary;
-pub mod canary_orchestrator;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
