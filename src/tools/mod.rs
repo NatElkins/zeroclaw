@@ -1433,4 +1433,59 @@ mod tests {
         assert!(names.contains(&"calculator"));
         assert!(names.contains(&"browser_open"));
     }
+
+    #[test]
+    fn all_tools_with_runtime_registers_filesystem_tools_without_shell() {
+        let tmp = TempDir::new().unwrap();
+        let security = Arc::new(SecurityPolicy::default());
+        let mem = markdown_memory(&tmp);
+        let browser = BrowserConfig {
+            enabled: true,
+            allowed_domains: vec!["example.com".into()],
+            session_name: None,
+            ..BrowserConfig::default()
+        };
+        let http = crate::config::HttpRequestConfig::default();
+        let mut cfg = test_config(&tmp);
+        cfg.text_browser.enabled = true;
+        cfg.google_workspace.enabled = true;
+        cfg.browser_delegate.enabled = true;
+        cfg.skills.prompt_injection_mode = crate::config::SkillsPromptInjectionMode::Compact;
+
+        let runtime: Arc<dyn RuntimeAdapter> = Arc::new(CapabilityTestRuntime::new(false, true));
+        let (tools, _) = all_tools_with_runtime(
+            Arc::new(cfg.clone()),
+            &security,
+            runtime,
+            mem,
+            None,
+            None,
+            &browser,
+            &http,
+            &crate::config::WebFetchConfig::default(),
+            tmp.path(),
+            &HashMap::new(),
+            None,
+            &cfg,
+        );
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+
+        assert!(!names.contains(&"shell"));
+        assert!(!names.contains(&"content_search"));
+        assert!(!names.contains(&"text_browser"));
+        assert!(!names.contains(&"google_workspace"));
+        assert!(!names.contains(&"browser_delegate"));
+        assert!(!names.contains(&"git_operations"));
+
+        assert!(names.contains(&"file_read"));
+        assert!(names.contains(&"file_write"));
+        assert!(names.contains(&"file_edit"));
+        assert!(names.contains(&"glob_search"));
+        assert!(names.contains(&"pushover"));
+        assert!(names.contains(&"read_skill"));
+        assert!(names.contains(&"pdf_read"));
+        assert!(names.contains(&"screenshot"));
+        assert!(names.contains(&"image_info"));
+        assert!(names.contains(&"browser_open"));
+    }
 }
