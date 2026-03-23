@@ -54,6 +54,8 @@ Commands:
   test-integration Run integration tests only
   test-system     Run system tests only
   test-live       Run live tests (requires credentials)
+  test-wasm-runtime Run wasm runtime feature tests
+  test-hybrid-local Run local hybrid readiness suite (component+integration+system+shell+delegate+wasm)
   test-manual     Run manual test scripts (dockerignore, etc.)
   build         Run release build smoke check (container only)
   audit         Run cargo audit (container only)
@@ -109,6 +111,20 @@ case "$1" in
 
   test-live)
     run_in_ci "cargo test --test live -- --ignored --verbose"
+    ;;
+
+  test-wasm-runtime)
+    run_in_ci "cargo test --features runtime-wasm runtime::wasm::tests:: --locked --verbose"
+    ;;
+
+  test-hybrid-local)
+    run_in_ci "cargo test --test component --locked --verbose"
+    run_in_ci "cargo test --test integration --locked --verbose"
+    run_in_ci "cargo test --test system --locked --verbose"
+    run_in_ci "cargo test tools::shell::tests:: --locked --verbose"
+    run_in_ci "cargo test tools::delegate::tests:: --locked --verbose"
+    run_in_ci "cargo test --features runtime-wasm runtime::tests::factory_wasm --locked --verbose"
+    run_in_ci "cargo test --features runtime-wasm runtime::wasm::tests:: --locked --verbose"
     ;;
 
   test-manual)
