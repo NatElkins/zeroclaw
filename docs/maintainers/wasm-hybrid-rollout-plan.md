@@ -1,0 +1,141 @@
+# WASM Hybrid Rollout Plan (Stacked PRs)
+
+This document is the durable execution plan for the ZeroClaw WASM/hybrid deployment track.
+It is intentionally implementation-oriented (sequence, acceptance criteria, rollback) so work can continue safely even if chat context is compacted.
+
+## Goals
+
+- Run the ZeroClaw control-plane/agent loop in WASM-friendly runtimes (Cloudflare Workers-first).
+- Preserve compatibility with native tool execution for filesystem/shell-heavy operations.
+- Keep type contracts shared (`zeroclaw-core`) so native and WASM runtimes remain wire/type compatible.
+- Optimize for scale-to-zero economics on edge ingress while retaining deep capability via delegated native workers.
+
+## Non-Goals (For This Track)
+
+- Full replacement of native runtime for shell/filesystem tools.
+- Shipping a complete Cloudflare production environment in a single PR.
+- Changing core product behavior unrelated to runtime portability.
+
+## Target Architecture (Hybrid)
+
+1. Edge ingress/runtime (WASM-friendly):
+   - request handling
+   - policy routing
+   - lightweight tool calls (HTTP, memory APIs, scheduling metadata)
+2. Capability-aware tool registry:
+   - only registers tools valid for runtime capabilities (shell/filesystem/etc)
+3. Native execution pool (delegated):
+   - shell/filesystem heavy tasks
+   - repo mutation, long-running build/test jobs
+4. Shared persistence:
+   - memory/event state through networked persistence APIs (TigerFS-like architecture)
+
+## Stacked PR Sequence
+
+## Completed
+
+1. `feat(core): extract zeroclaw-core crate for WASM runtime support`
+   - branch: `feat/zeroclaw-core`
+   - status: merged into stack baseline
+2. `feat(tools): gate tool registration by runtime capabilities`
+   - PR: #2
+   - status: open in stack
+3. `test(tools): add filesystem-only runtime registration matrix`
+   - PR: #3
+   - status: open in stack
+4. `feat(runtime): add feature-gated wasm runtime factory/config path`
+   - PR: #4
+   - status: open in stack
+
+## Next
+
+5. Runtime capability contract hardening
+   - make capability checks declarative and centrally testable
+   - add regression tests for all runtime kinds (`native`, `docker`, `wasm`)
+6. WASM runtime activation path
+   - smoke tests for `runtime.kind = "wasm"` with feature enabled
+   - explicit negative-path tests when feature is disabled
+7. Memory backend abstraction for edge
+   - network-first memory adapter for WASM runtimes
+   - shared schema compatibility tests between native and edge adapters
+8. Delegation control-plane integration
+   - route shell/filesystem-required tasks to native delegates
+   - enforce policy and capability boundaries in one place
+9. End-to-end local simulation harness
+   - local edge runtime stubs + delegated native worker
+   - deterministic scenario tests (chat -> tool selection -> delegation -> persistence)
+10. Cloudflare canary deployment
+   - canary env + observability SLOs + rollback controls
+
+## Milestones And Exit Criteria
+
+## Milestone A: Capability-Safe Runtime Selection
+
+- `runtime.kind = "wasm"` is parseable/configurable.
+- tool registry excludes invalid tools by capability.
+- tests cover no-shell and fs-only matrices.
+
+Exit criteria:
+- all runtime/tool matrix tests pass in CI.
+- no shell/fs tools leak into disallowed runtime snapshots.
+
+## Milestone B: Edge-Compatible Persistence/Memory
+
+- memory adapter runs in WASM without local filesystem assumptions.
+- shared type compatibility guaranteed against native memory entry types.
+
+Exit criteria:
+- round-trip tests prove compatibility across native and WASM adapter boundaries.
+
+## Milestone C: Hybrid Delegation
+
+- shell/fs operations automatically route to native delegate workers.
+- edge runtime remains stateless except for explicit persistence APIs.
+
+Exit criteria:
+- deterministic integration tests for delegation success/failure paths.
+- policy checks enforced before and after delegation.
+
+## Milestone D: Canary Production Readiness
+
+- Cloudflare canary deployed with rollback automation.
+- cost/latency/error-rate dashboards available.
+
+Exit criteria:
+- SLO burn acceptable for 7-day canary.
+- rollback drill completed successfully.
+
+## Local Iteration Strategy
+
+1. Use runtime stubs in tests to model capability subsets (`no-cap`, `fs-only`, `full`).
+2. Run feature-gated checks locally:
+   - `cargo check --features runtime-wasm`
+3. Keep deterministic integration fixtures for:
+   - tool selection decisions
+   - delegation routing
+   - memory schema compatibility
+4. Use local native delegate worker process to simulate cloud hybrid behavior.
+
+## Operational Guardrails
+
+- every stacked PR must include:
+  - explicit scope
+  - validation commands run
+  - rollback note
+  - dependency relation (`Depends on #...`)
+- avoid mixed refactor + behavior changes in one PR.
+- keep feature flags explicit and default-safe.
+
+## Rollback Strategy
+
+- Runtime path rollback:
+  - set `runtime.kind = "native"` and disable `runtime-wasm` feature.
+- Tool path rollback:
+  - disable edge delegation routes and use existing native registry path.
+- Persistence rollback:
+  - switch memory backend config back to current native-default adapter.
+
+## Notes
+
+- This plan is the canonical reference for this stack. Keep it updated as each PR lands.
+- PR bodies should reference this document for progress state and acceptance criteria.
