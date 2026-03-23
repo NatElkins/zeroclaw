@@ -48,32 +48,23 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - status: complete in stack
 5. `feat(runtime): harden runtime capability contract and kind matrix tests`
    - PR: #7
-   - status: complete in stack
+   - status: open in stack
 6. `test(runtime): add wasm runtime activation smoke coverage`
    - PR: #8
-   - status: complete in stack
-7. `feat(memory): add http backend for edge storage adapters`
-   - PR: #11
-   - status: complete in stack
-8. `feat(tools): add runtime capability-fallback delegation proxies`
-   - PR: #12
-   - status: superseded in stack
-   - superseded by PR #24 edge/native delegation boundary (`crates/zeroclaw-edge/src/delegate_http.rs`)
-     and deterministic end-to-end delegation/persistence coverage in PR #14 and PR #25
-9. `spike(edge): add zeroclaw-edge worker viability harness`
-   - PR: #13
-   - status: complete in stack
-10. End-to-end local simulation harness
-   - PR: #14
-   - status: complete in stack
-   - local edge runtime stubs + delegated native worker
-   - deterministic scenario tests (chat -> tool selection -> delegation -> persistence)
+   - status: open in stack
 
 ## Next
 
-11. Cloudflare canary deployment
-   - PR: #15
-   - status: in progress in stack
+7. Memory backend abstraction for edge
+   - network-first memory adapter for WASM runtimes
+   - shared schema compatibility tests between native and edge adapters
+8. Delegation control-plane integration
+   - route shell/filesystem-required tasks to native delegates
+   - enforce policy and capability boundaries in one place
+9. End-to-end local simulation harness
+   - local edge runtime stubs + delegated native worker
+   - deterministic scenario tests (chat -> tool selection -> delegation -> persistence)
+10. Cloudflare canary deployment
    - canary env + observability SLOs + rollback controls
    - typed rollout controller with deterministic promote/hold/rollback behavior
 12. Canary orchestration execution path
