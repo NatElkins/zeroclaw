@@ -2,6 +2,8 @@
 pub enum MemoryBackendKind {
     Sqlite,
     Lucid,
+    Postgres,
+    Http,
     Qdrant,
     Markdown,
     None,
@@ -40,6 +42,24 @@ const LUCID_PROFILE: MemoryBackendProfile = MemoryBackendProfile {
 const MARKDOWN_PROFILE: MemoryBackendProfile = MemoryBackendProfile {
     key: "markdown",
     label: "Markdown Files — simple, human-readable, no dependencies",
+    auto_save_default: true,
+    uses_sqlite_hygiene: false,
+    sqlite_based: false,
+    optional_dependency: false,
+};
+
+const POSTGRES_PROFILE: MemoryBackendProfile = MemoryBackendProfile {
+    key: "postgres",
+    label: "PostgreSQL — remote durable storage via [storage.provider.config]",
+    auto_save_default: true,
+    uses_sqlite_hygiene: false,
+    sqlite_based: false,
+    optional_dependency: true,
+};
+
+const HTTP_PROFILE: MemoryBackendProfile = MemoryBackendProfile {
+    key: "http",
+    label: "HTTP Memory API — network-first edge persistence via [storage.provider.config]",
     auto_save_default: true,
     uses_sqlite_hygiene: false,
     sqlite_based: false,
@@ -92,6 +112,8 @@ pub fn classify_memory_backend(backend: &str) -> MemoryBackendKind {
     match backend {
         "sqlite" => MemoryBackendKind::Sqlite,
         "lucid" => MemoryBackendKind::Lucid,
+        "postgres" => MemoryBackendKind::Postgres,
+        "http" | "edge" | "tigerfs" => MemoryBackendKind::Http,
         "qdrant" => MemoryBackendKind::Qdrant,
         "markdown" => MemoryBackendKind::Markdown,
         "none" => MemoryBackendKind::None,
@@ -103,6 +125,8 @@ pub fn memory_backend_profile(backend: &str) -> MemoryBackendProfile {
     match classify_memory_backend(backend) {
         MemoryBackendKind::Sqlite => SQLITE_PROFILE,
         MemoryBackendKind::Lucid => LUCID_PROFILE,
+        MemoryBackendKind::Postgres => POSTGRES_PROFILE,
+        MemoryBackendKind::Http => HTTP_PROFILE,
         MemoryBackendKind::Qdrant => QDRANT_PROFILE,
         MemoryBackendKind::Markdown => MARKDOWN_PROFILE,
         MemoryBackendKind::None => NONE_PROFILE,
@@ -118,6 +142,13 @@ mod tests {
     fn classify_known_backends() {
         assert_eq!(classify_memory_backend("sqlite"), MemoryBackendKind::Sqlite);
         assert_eq!(classify_memory_backend("lucid"), MemoryBackendKind::Lucid);
+        assert_eq!(
+            classify_memory_backend("postgres"),
+            MemoryBackendKind::Postgres
+        );
+        assert_eq!(classify_memory_backend("http"), MemoryBackendKind::Http);
+        assert_eq!(classify_memory_backend("edge"), MemoryBackendKind::Http);
+        assert_eq!(classify_memory_backend("tigerfs"), MemoryBackendKind::Http);
         assert_eq!(
             classify_memory_backend("markdown"),
             MemoryBackendKind::Markdown
