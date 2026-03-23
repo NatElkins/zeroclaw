@@ -14518,6 +14518,14 @@ default_model = "persisted-profile"
             Some("edge-token")
         );
         assert_eq!(
+            config.storage.provider.config.api_url.as_deref(),
+            Some("https://memory.example.com")
+        );
+        assert_eq!(
+            config.storage.provider.config.api_token.as_deref(),
+            Some("edge-token")
+        );
+        assert_eq!(
             config.storage.provider.config.connect_timeout_secs,
             Some(15)
         );
