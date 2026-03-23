@@ -52,83 +52,28 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
 6. `test(runtime): add wasm runtime activation smoke coverage`
    - PR: #8
    - status: open in stack
+7. `feat(memory): add http backend for edge storage adapters`
+   - PR: #11
+   - status: open in stack
+8. `feat(tools): add runtime capability-fallback delegation proxies`
+   - PR: #12
+   - status: in progress in stack
+9. `spike(edge): add zeroclaw-edge worker viability harness`
+   - PR: #13
+   - status: complete in stack
+10. End-to-end local simulation harness
+   - PR: #14
+   - status: complete in stack
+   - local edge runtime stubs + delegated native worker
+   - deterministic scenario tests (chat -> tool selection -> delegation -> persistence)
 
 ## Next
 
-7. Memory backend abstraction for edge
-   - network-first memory adapter for WASM runtimes
-   - shared schema compatibility tests between native and edge adapters
-8. Delegation control-plane integration
-   - route shell/filesystem-required tasks to native delegates
-   - enforce policy and capability boundaries in one place
-9. End-to-end local simulation harness
-   - local edge runtime stubs + delegated native worker
-   - deterministic scenario tests (chat -> tool selection -> delegation -> persistence)
-10. Cloudflare canary deployment
+11. Cloudflare canary deployment
+   - PR: #15
+   - status: in progress in stack
    - canary env + observability SLOs + rollback controls
    - typed rollout controller with deterministic promote/hold/rollback behavior
-12. Canary orchestration execution path
-   - PR: #16
-   - status: in progress in stack
-   - metrics ingestion + traffic split apply + event sink persistence
-   - deterministic end-to-end canary tick simulations
-13. Cloudflare CLI traffic client wiring
-   - PR: #17
-   - status: in progress in stack
-   - typed `wrangler versions deploy` adapter for rollout split updates
-   - deterministic command-assembly tests including rollback and `npx wrangler` invocation
-14. Live canary orchestrator wiring
-   - PR: #18
-   - status: complete in stack
-   - typed assembly path from canary controller + metrics source + event sink to live `wrangler` traffic client
-   - deterministic orchestration tick test through injected command-runner boundary
-15. One-shot canary runtime integration
-   - PR: #19
-   - status: in progress in stack
-   - telemetry pull adapter (`curl` JSON metrics source) for canary inputs
-   - one-shot runtime path: metrics -> decision -> `wrangler versions deploy`
-   - integration-style tests using local HTTP telemetry + real subprocess boundaries
-16. Scheduled canary trigger wiring
-   - PR: #20
-   - status: complete in stack
-   - fixed-interval trigger + scheduler loop policy
-   - reusable tick-runner boundary with stateful controller progression across intervals
-   - integration-style tests for promote->rollback across scheduled ticks
-17. Cloudflare Cron event binding
-   - PR: #21
-   - status: in progress in stack
-   - typed Cloudflare scheduled event payload validation
-   - cron event -> one canary tick execution bridge
-   - integration-style test for cron payload to traffic-split command path
-   - local Worker `/chat` end-to-end smoke via `./scripts/edge_worker_chat_demo.sh`
-18. Worker chat session persistence via Durable Objects
-   - PR: #22
-   - status: complete in stack
-   - add `session_id` aware `/chat` path backed by Cloudflare Durable Object storage
-   - persist/retrieve bounded chat history without filesystem assumptions
-   - local deterministic demo: multi-turn recall in same session
-
-## Upcoming
-
-19. Cloudflare deployed Worker smoke (real edge URL)
-   - status: complete in stack
-   - deploy `zeroclaw-edge-worker` to Cloudflare (dev account first)
-   - configure secrets/vars (`OPENROUTER_API_KEY`, canary vars, Durable Object migration)
-   - verify remote `/healthz`, `/chat`, `/chat/reset`, `/tick` from outside local machine
-20. Canary drill on deployed Worker
-   - status: complete in stack
-   - run promote/hold/rollback drill against deployed Worker via authenticated drill endpoints
-   - dry-run apply path verified end-to-end (decision + traffic update command assembly)
-   - rollback evidence + operator runbook commands documented
-21. Hybrid native delegation service path
-   - status: pending
-   - add authenticated edge->native delegate call boundary for filesystem/shell tool fallback
-   - keep edge runtime capability-safe while enabling heavy operations through delegation
-22. Shared long-term memory backend integration
-   - status: pending
-   - keep Durable Object history as short-term session memory
-   - wire HTTP memory backend (TigerFS-like service) for durable cross-session memory
-   - add reconciliation tests across edge/native readers
 
 ## Milestones And Exit Criteria
 
