@@ -52,21 +52,16 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
 6. `test(runtime): add wasm runtime activation smoke coverage`
    - PR: #8
    - status: open in stack
-7. `feat(memory): add http backend for edge storage adapters`
-   - PR: #11
-   - status: open in stack
-8. `feat(tools): add runtime capability-fallback delegation proxies`
-   - PR: #12
-   - status: in progress in stack
-9. `spike(edge): add zeroclaw-edge worker viability harness`
-   - PR: #13
-   - status: in progress in stack
 
 ## Next
 
-10. End-to-end local simulation harness
-   - PR: #14
-   - status: in progress in stack
+7. Memory backend abstraction for edge
+   - network-first memory adapter for WASM runtimes
+   - shared schema compatibility tests between native and edge adapters
+8. Delegation control-plane integration
+   - route shell/filesystem-required tasks to native delegates
+   - enforce policy and capability boundaries in one place
+9. End-to-end local simulation harness
    - local edge runtime stubs + delegated native worker
    - deterministic scenario tests (chat -> tool selection -> delegation -> persistence)
 11. Cloudflare canary deployment
