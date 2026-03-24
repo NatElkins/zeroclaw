@@ -12,13 +12,8 @@ use crate::canary_live::{
     build_cloudflare_wrangler_orchestrator_with_runner, CloudflareCanaryWiringConfig,
 };
 use crate::canary_metrics::{CurlCanaryMetricsConfig, CurlCanaryMetricsSource};
-use crate::canary_orchestrator::{
-    CanaryEventSink, CanaryMetricsSource, CanaryOrchestrator, CanaryTickOutcome,
-    CanaryTrafficClient,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::cloudflare_cli::SystemCommandRunner;
-use crate::cloudflare_cli::{CloudflareWranglerTrafficClient, CommandRunner};
+use crate::canary_orchestrator::{CanaryEventSink, CanaryTickOutcome};
+use crate::cloudflare_cli::{CommandOutput, CommandRunner, SystemCommandRunner};
 
 /// One-shot canary tick runtime configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,92 +28,7 @@ impl CloudflareOneShotCanaryConfig {
     }
 }
 
-/// Stateful service for executing canary ticks repeatedly with preserved canary
-/// controller stage state.
-pub struct CloudflareCanaryTickService<M, C, E>
-where
-    M: CanaryMetricsSource,
-    C: CanaryTrafficClient,
-    E: CanaryEventSink,
-{
-    orchestrator: CanaryOrchestrator<M, C, E>,
-}
-
-impl<M, C, E> CloudflareCanaryTickService<M, C, E>
-where
-    M: CanaryMetricsSource,
-    C: CanaryTrafficClient,
-    E: CanaryEventSink,
-{
-    pub fn new(orchestrator: CanaryOrchestrator<M, C, E>) -> Self {
-        Self { orchestrator }
-    }
-
-    pub async fn tick(&mut self) -> Result<CanaryTickOutcome> {
-        self.orchestrator.tick().await
-    }
-}
-
-/// Builds a reusable canary tick service using system command runners.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn build_cloudflare_canary_tick_service<E>(
-    controller: CanaryController,
-    event_sink: Arc<E>,
-    config: CloudflareOneShotCanaryConfig,
-) -> Result<
-    CloudflareCanaryTickService<
-        CurlCanaryMetricsSource<SystemCommandRunner>,
-        CloudflareWranglerTrafficClient<SystemCommandRunner>,
-        E,
-    >,
->
-where
-    E: CanaryEventSink,
-{
-    build_cloudflare_canary_tick_service_with_runners(
-        controller,
-        event_sink,
-        config,
-        SystemCommandRunner,
-        SystemCommandRunner,
-    )
-}
-
-/// Same as [`build_cloudflare_canary_tick_service`] with injected runners.
-pub fn build_cloudflare_canary_tick_service_with_runners<E, MR, TR>(
-    controller: CanaryController,
-    event_sink: Arc<E>,
-    config: CloudflareOneShotCanaryConfig,
-    metrics_runner: MR,
-    traffic_runner: TR,
-) -> Result<
-    CloudflareCanaryTickService<
-        CurlCanaryMetricsSource<MR>,
-        CloudflareWranglerTrafficClient<TR>,
-        E,
-    >,
->
-where
-    E: CanaryEventSink,
-    MR: CommandRunner,
-    TR: CommandRunner,
-{
-    let metrics_source = Arc::new(CurlCanaryMetricsSource::new(
-        config.metrics,
-        metrics_runner,
-    )?);
-    let orchestrator = build_cloudflare_wrangler_orchestrator_with_runner(
-        controller,
-        metrics_source,
-        event_sink,
-        config.wiring,
-        traffic_runner,
-    )?;
-    Ok(CloudflareCanaryTickService::new(orchestrator))
-}
-
 /// Runs a single canary tick with system command runners.
-#[cfg(not(target_arch = "wasm32"))]
 pub async fn run_cloudflare_one_shot_canary_tick<E>(
     controller: CanaryController,
     event_sink: Arc<E>,
@@ -329,14 +239,13 @@ mod tests {
     #[derive(Default)]
     struct FailRunner;
 
-    #[async_trait::async_trait(?Send)]
     impl CommandRunner for FailRunner {
-        async fn run(
+        fn run(
             &self,
             _program: &str,
             _args: &[String],
             _cwd: Option<&PathBuf>,
-        ) -> Result<crate::cloudflare_cli::CommandOutput> {
+        ) -> Result<CommandOutput> {
             Err(anyhow::anyhow!("runner failed"))
         }
     }
