@@ -108,6 +108,34 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - cron event -> one canary tick execution bridge
    - integration-style test for cron payload to traffic-split command path
    - local Worker `/chat` end-to-end smoke via `./scripts/edge_worker_chat_demo.sh`
+18. Worker chat session persistence via Durable Objects
+   - PR: #22
+   - status: complete in stack
+   - add `session_id` aware `/chat` path backed by Cloudflare Durable Object storage
+   - persist/retrieve bounded chat history without filesystem assumptions
+   - local deterministic demo: multi-turn recall in same session
+
+## Upcoming
+
+19. Cloudflare deployed Worker smoke (real edge URL)
+   - status: complete in stack
+   - deploy `zeroclaw-edge-worker` to Cloudflare (dev account first)
+   - configure secrets/vars (`OPENROUTER_API_KEY`, canary vars, Durable Object migration)
+   - verify remote `/healthz`, `/chat`, `/chat/reset`, `/tick` from outside local machine
+20. Canary drill on deployed Worker
+   - status: complete in stack
+   - run promote/hold/rollback drill against deployed Worker via authenticated drill endpoints
+   - dry-run apply path verified end-to-end (decision + traffic update command assembly)
+   - rollback evidence + operator runbook commands documented
+21. Hybrid native delegation service path
+   - status: pending
+   - add authenticated edge->native delegate call boundary for filesystem/shell tool fallback
+   - keep edge runtime capability-safe while enabling heavy operations through delegation
+22. Shared long-term memory backend integration
+   - status: pending
+   - keep Durable Object history as short-term session memory
+   - wire HTTP memory backend (TigerFS-like service) for durable cross-session memory
+   - add reconciliation tests across edge/native readers
 
 ## Milestones And Exit Criteria
 
