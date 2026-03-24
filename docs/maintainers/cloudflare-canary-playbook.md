@@ -145,13 +145,15 @@ The Worker exposes authenticated drill endpoints:
 
 - `GET /canary/drill/metrics/{promote|hold|rollback}`
 - `POST /canary/drill/tick/{promote|hold|rollback}`
+- `POST /canary/drill/export/{all|promote|hold|rollback}?limit=<n>`
 - `GET /canary/audit/recent?limit=<n>`
 - `POST /canary/audit/clear`
 
 These use a deterministic metrics payload per scenario and force dry-run traffic updates
 so drills can exercise the full decision/apply path without mutating production traffic.
 Each tick is also persisted in Durable Object audit storage and retrievable from
-`/canary/audit/recent`.
+`/canary/audit/recent`. Export calls return a signed incident bundle payload
+containing drill runs + recent audit records for postmortems.
 
 ### Prerequisites
 
@@ -159,6 +161,18 @@ Each tick is also persisted in Durable Object audit storage and retrievable from
 
 ```bash
 printf '%s' '<your-drill-token>' | npx wrangler secret put ZEROCLAW_CANARY_DRILL_TOKEN
+```
+
+2. Set artifact signing secret (for `/canary/drill/export/*`):
+
+```bash
+printf '%s' '<artifact-signing-key>' | npx wrangler secret put ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY
+```
+
+Optional key-id label:
+
+```bash
+npx wrangler secret put ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY_ID
 ```
 
 2. Ensure deployed Worker URL is known.
@@ -198,7 +212,30 @@ curl -fsS "https://<worker>.<subdomain>.workers.dev/canary/audit/recent?limit=20
   -H "x-zeroclaw-drill-token: <your-drill-token>"
 ```
 
+### Auto-Export Signed Incident Artifact Bundle
+
+```bash
+ZEROCLAW_EDGE_DEMO_BASE_URL="https://<worker>.<subdomain>.workers.dev" \
+ZEROCLAW_CANARY_DRILL_TOKEN="<your-drill-token>" \
+./scripts/edge_worker_canary_export_artifact.sh all
+```
+
+The script writes:
+
+1. `bundle.json` (signed payload from Worker)
+2. `payload.json`, `signature.json`, `drill_runs.json`, `audit_records.json`
+3. `manifest.json` (sha256 inventory)
+4. `<bundle>.tar.gz` (incident artifact bundle)
+
+To locally verify the HMAC signature in the bundle:
+
+```bash
+ZEROCLAW_CANARY_ARTIFACT_VERIFY_KEY="<artifact-signing-key>" \
+ZEROCLAW_EDGE_DEMO_BASE_URL="https://<worker>.<subdomain>.workers.dev" \
+ZEROCLAW_CANARY_DRILL_TOKEN="<your-drill-token>" \
+./scripts/edge_worker_canary_export_artifact.sh rollback
+```
+
 ## Intended Next Step
 
-1. Add remote drill evidence auto-export into a signed incident artifact bundle.
-2. Add retention + export policies for canary audit records (windowing and archival).
+1. Add retention + export policies for canary audit records (windowing and archival).
