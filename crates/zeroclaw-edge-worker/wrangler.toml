@@ -9,20 +9,6 @@ command = "cargo install -q worker-build && worker-build --release"
 [triggers]
 crons = ["*/5 * * * *"]
 
-[durable_objects]
-bindings = [
-  { name = "ZEROCLAW_CHAT_SESSIONS", class_name = "ChatSessionObject" },
-  { name = "ZEROCLAW_CANARY_AUDIT", class_name = "CanaryAuditObject" }
-]
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["ChatSessionObject"]
-
-[[migrations]]
-tag = "v2"
-new_sqlite_classes = ["CanaryAuditObject"]
-
 [vars]
 # Required runtime settings.
 ZEROCLAW_CANARY_STABLE_VERSION_ID = "stable-v1"
@@ -38,18 +24,9 @@ ZEROCLAW_CANARY_STAGES = "10:1,25:1,100:1"
 ZEROCLAW_CANARY_MAX_ERROR_RATE_BPS = "100"
 ZEROCLAW_CANARY_MAX_P95_LATENCY_MS = "500"
 ZEROCLAW_CANARY_MIN_REQUEST_COUNT = "10"
-ZEROCLAW_CANARY_AUDIT_MAX_RECORDS = "500"
-ZEROCLAW_CHAT_HISTORY_MESSAGES = "12"
 
 # Secret required:
 # CLOUDFLARE_API_TOKEN (set via `wrangler secret put CLOUDFLARE_API_TOKEN`)
 # Optional secret:
 # ZEROCLAW_CANARY_METRICS_BEARER_TOKEN
-# ZEROCLAW_CANARY_DRILL_TOKEN (enables authenticated /canary/drill/* endpoints)
-# ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY (enables signed /canary/drill/export/* bundles)
-# ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY_ID (optional key label in exported signatures)
-# ZEROCLAW_LONG_TERM_MEMORY_AUTH_TOKEN
-#
-# Optional vars:
-# ZEROCLAW_LONG_TERM_MEMORY_BASE_URL (shared memory API, e.g. TigerFS-like service)
-# ZEROCLAW_LONG_TERM_MEMORY_RECALL_LIMIT (default 6, max 25)
+
