@@ -107,6 +107,7 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - typed Cloudflare scheduled event payload validation
    - cron event -> one canary tick execution bridge
    - integration-style test for cron payload to traffic-split command path
+   - local Worker `/chat` end-to-end smoke via `./scripts/edge_worker_chat_demo.sh`
 
 ## Milestones And Exit Criteria
 

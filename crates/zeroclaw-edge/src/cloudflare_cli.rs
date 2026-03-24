@@ -5,6 +5,7 @@
 //! `wrangler versions deploy`.
 
 use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
@@ -22,15 +23,29 @@ pub struct CommandOutput {
 }
 
 /// Command execution boundary used for deterministic tests.
+#[async_trait(?Send)]
 pub trait CommandRunner: Send + Sync {
-    fn run(&self, program: &str, args: &[String], cwd: Option<&PathBuf>) -> Result<CommandOutput>;
+    async fn run(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: Option<&PathBuf>,
+    ) -> Result<CommandOutput>;
 }
 
 /// Real command runner using `std::process::Command`.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct SystemCommandRunner;
 
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait(?Send)]
 impl CommandRunner for SystemCommandRunner {
-    fn run(&self, program: &str, args: &[String], cwd: Option<&PathBuf>) -> Result<CommandOutput> {
+    async fn run(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: Option<&PathBuf>,
+    ) -> Result<CommandOutput> {
         let mut cmd = Command::new(program);
         cmd.args(args);
         if let Some(cwd) = cwd {
@@ -154,7 +169,7 @@ where
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<R> CanaryTrafficClient for CloudflareWranglerTrafficClient<R>
 where
     R: CommandRunner,
@@ -164,6 +179,7 @@ where
         let output = self
             .runner
             .run(&self.config.wrangler_bin, &args, self.config.cwd.as_ref())
+            .await
             .context("wrangler versions deploy command failed to execute")?;
 
         if output.status_code != 0 {
@@ -214,8 +230,9 @@ mod tests {
         }
     }
 
+    #[async_trait(?Send)]
     impl CommandRunner for RecordingRunner {
-        fn run(
+        async fn run(
             &self,
             program: &str,
             args: &[String],
