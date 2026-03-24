@@ -3,8 +3,12 @@ use std::num::{NonZeroU64, NonZeroU8};
 
 #[cfg(any(test, target_arch = "wasm32"))]
 use anyhow::{anyhow, Context, Result};
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(test, target_arch = "wasm32"))]
+use hmac::{Hmac, Mac};
+#[cfg(any(test, target_arch = "wasm32"))]
 use serde::{Deserialize, Serialize};
+#[cfg(any(test, target_arch = "wasm32"))]
+use sha2::{Digest, Sha256};
 #[cfg(target_arch = "wasm32")]
 use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
@@ -62,6 +66,10 @@ const ENV_CLOUDFLARE_API_TOKEN: &str = "CLOUDFLARE_API_TOKEN";
 const ENV_CANARY_DRILL_TOKEN: &str = "ZEROCLAW_CANARY_DRILL_TOKEN";
 #[cfg(target_arch = "wasm32")]
 const ENV_CANARY_AUDIT_MAX_RECORDS: &str = "ZEROCLAW_CANARY_AUDIT_MAX_RECORDS";
+#[cfg(target_arch = "wasm32")]
+const ENV_CANARY_ARTIFACT_SIGNING_KEY: &str = "ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY";
+#[cfg(target_arch = "wasm32")]
+const ENV_CANARY_ARTIFACT_SIGNING_KEY_ID: &str = "ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY_ID";
 #[cfg(any(test, target_arch = "wasm32"))]
 const DEFAULT_CANARY_AUDIT_MAX_RECORDS: usize = 500;
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -258,6 +266,13 @@ enum CanaryDrillScenario {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanaryDrillExportTarget {
+    All,
+    Single(CanaryDrillScenario),
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CanaryAuditRecord {
     recorded_at_ms: u64,
@@ -284,6 +299,31 @@ struct CanaryAuditRecentResponse {
 struct CanaryAuditAppendRequest {
     record: CanaryAuditRecord,
     max_records: usize,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryDrillArtifactPayload {
+    generated_at_ms: u64,
+    scenario: String,
+    drill_runs: Vec<DrillTickSummary>,
+    audit_records: Vec<CanaryAuditRecord>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryDrillArtifactSignature {
+    algorithm: String,
+    key_id: Option<String>,
+    payload_sha256_hex: String,
+    signature_hmac_sha256_hex: String,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryDrillArtifactBundle {
+    payload: CanaryDrillArtifactPayload,
+    signature: CanaryDrillArtifactSignature,
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -329,6 +369,80 @@ fn canary_audit_recent_limit_from_url(url: &str) -> Result<usize> {
         (key == "limit").then_some(value)
     });
     parse_canary_audit_recent_limit(limit)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn parse_canary_drill_export_target(raw: &str) -> Result<CanaryDrillExportTarget> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Err(anyhow!("missing drill export scenario"));
+    }
+    if normalized == "all" {
+        return Ok(CanaryDrillExportTarget::All);
+    }
+    Ok(CanaryDrillExportTarget::Single(CanaryDrillScenario::parse(
+        normalized.as_str(),
+    )?))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn drill_scenarios_for_target(target: CanaryDrillExportTarget) -> Vec<CanaryDrillScenario> {
+    match target {
+        CanaryDrillExportTarget::All => vec![
+            CanaryDrillScenario::Promote,
+            CanaryDrillScenario::Hold,
+            CanaryDrillScenario::Rollback,
+        ],
+        CanaryDrillExportTarget::Single(scenario) => vec![scenario],
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn drill_target_label(target: CanaryDrillExportTarget) -> &'static str {
+    match target {
+        CanaryDrillExportTarget::All => "all",
+        CanaryDrillExportTarget::Single(CanaryDrillScenario::Promote) => "promote",
+        CanaryDrillExportTarget::Single(CanaryDrillScenario::Hold) => "hold",
+        CanaryDrillExportTarget::Single(CanaryDrillScenario::Rollback) => "rollback",
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn hex_encode_lower(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn sign_canary_drill_artifact_payload(
+    payload: CanaryDrillArtifactPayload,
+    signing_key: &str,
+    key_id: Option<&str>,
+) -> Result<CanaryDrillArtifactBundle> {
+    let trimmed = signing_key.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("artifact signing key must not be empty"));
+    }
+    let payload_bytes =
+        serde_json::to_vec(&payload).context("failed serializing canary drill artifact payload")?;
+    let payload_digest = Sha256::digest(&payload_bytes);
+    let payload_sha256_hex = hex_encode_lower(payload_digest.as_ref());
+    let mut mac = Hmac::<Sha256>::new_from_slice(trimmed.as_bytes())
+        .map_err(|e| anyhow!("invalid artifact signing key: {e}"))?;
+    mac.update(&payload_bytes);
+    let signature_hmac_sha256_hex = hex_encode_lower(&mac.finalize().into_bytes());
+    Ok(CanaryDrillArtifactBundle {
+        payload,
+        signature: CanaryDrillArtifactSignature {
+            algorithm: "hmac-sha256".to_string(),
+            key_id: key_id.map(|id| id.to_string()),
+            payload_sha256_hex,
+            signature_hmac_sha256_hex,
+        },
+    })
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -638,7 +752,7 @@ fn build_openrouter_messages(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct TickSummary {
     decision: String,
     applied_canary_percent: Option<u8>,
@@ -647,8 +761,8 @@ struct TickSummary {
     p95_latency_ms: u32,
 }
 
-#[cfg(target_arch = "wasm32")]
-#[derive(Debug, Clone, Serialize)]
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct DrillTickSummary {
     scenario: String,
     dry_run: bool,
@@ -1211,8 +1325,49 @@ mod wasm_runtime {
         ))
     }
 
+    fn parse_drill_export_path(
+        path: &str,
+        prefix: &str,
+    ) -> Result<Option<CanaryDrillExportTarget>> {
+        let Some(raw) = path.strip_prefix(prefix) else {
+            return Ok(None);
+        };
+        if raw.is_empty() || raw.contains('/') {
+            return Err(worker::Error::RustError(
+                "drill export path must be one segment".to_string(),
+            ));
+        }
+        parse_canary_drill_export_target(raw)
+            .map(Some)
+            .map_err(|e| worker::Error::RustError(e.to_string()))
+    }
+
     fn drill_token_required(env: &Env) -> Option<String> {
         env.var(ENV_CANARY_DRILL_TOKEN)
+            .ok()
+            .map(|v| v.to_string())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    }
+
+    fn artifact_signing_key_required(env: &Env) -> Result<String> {
+        let signing_key = env
+            .var(ENV_CANARY_ARTIFACT_SIGNING_KEY)
+            .ok()
+            .map(|v| v.to_string())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| {
+                worker::Error::RustError(format!(
+                    "drill export disabled; missing {}",
+                    ENV_CANARY_ARTIFACT_SIGNING_KEY
+                ))
+            })?;
+        Ok(signing_key)
+    }
+
+    fn artifact_signing_key_id(env: &Env) -> Option<String> {
+        env.var(ENV_CANARY_ARTIFACT_SIGNING_KEY_ID)
             .ok()
             .map(|v| v.to_string())
             .map(|v| v.trim().to_string())
@@ -1721,6 +1876,38 @@ mod wasm_runtime {
         Response::from_json(&scenario.metrics_payload())
     }
 
+    async fn run_drill_tick_for_scenario(
+        env: &Env,
+        scenario: CanaryDrillScenario,
+        drill_token: &str,
+    ) -> Result<DrillTickSummary> {
+        let drill_payload = scenario.metrics_payload().to_string();
+        let payload = CloudflareCronEventPayload {
+            cron: format!("drill:{}", scenario.as_slug()),
+            scheduled_time: worker::Date::now().as_millis(),
+            r#type: Some("scheduled".to_string()),
+        };
+        let summary = run_one_tick_with_runners(
+            payload,
+            env,
+            TickOverrides {
+                metrics_endpoint: Some("https://drill.internal/metrics".to_string()),
+                metrics_bearer_token: Some(drill_token.to_string()),
+                dry_run: Some(true),
+                message_prefix: Some(format!("zeroclaw canary drill {}", scenario.as_slug())),
+            },
+            WorkerDrillMetricsRunner {
+                payload: drill_payload,
+            },
+        )
+        .await?;
+        Ok(DrillTickSummary {
+            scenario: scenario.as_slug().to_string(),
+            dry_run: true,
+            tick: summary,
+        })
+    }
+
     async fn run_canary_drill_tick(req: Request, env: &Env) -> Result<Response> {
         let drill_token = match authorized_drill_token(&req, env) {
             Ok(token) => token,
@@ -1737,31 +1924,58 @@ mod wasm_runtime {
         };
         let scenario = parse_drill_path(req.path().as_str(), "/canary/drill/tick/")?
             .ok_or_else(|| worker::Error::RustError("missing drill scenario".to_string()))?;
-        let drill_payload = scenario.metrics_payload().to_string();
-        let payload = CloudflareCronEventPayload {
-            cron: format!("drill:{}", scenario.as_slug()),
-            scheduled_time: worker::Date::now().as_millis(),
-            r#type: Some("scheduled".to_string()),
+        let summary = run_drill_tick_for_scenario(env, scenario, drill_token.as_str()).await?;
+        Response::from_json(&summary)
+    }
+
+    async fn run_canary_drill_export(req: Request, env: &Env) -> Result<Response> {
+        let drill_token = match authorized_drill_token(&req, env) {
+            Ok(token) => token,
+            Err(err) => {
+                let msg = err.to_string();
+                if msg.contains("disabled") {
+                    return Response::error(msg, 404);
+                }
+                if msg.contains("unauthorized") {
+                    return Response::error(msg, 401);
+                }
+                return Err(err);
+            }
         };
-        let summary = run_one_tick_with_runners(
-            payload,
-            env,
-            TickOverrides {
-                metrics_endpoint: Some("https://drill.internal/metrics".to_string()),
-                metrics_bearer_token: Some(drill_token),
-                dry_run: Some(true),
-                message_prefix: Some(format!("zeroclaw canary drill {}", scenario.as_slug())),
-            },
-            WorkerDrillMetricsRunner {
-                payload: drill_payload,
-            },
-        )
-        .await?;
-        Response::from_json(&DrillTickSummary {
-            scenario: scenario.as_slug().to_string(),
-            dry_run: true,
-            tick: summary,
-        })
+        let target = parse_drill_export_path(req.path().as_str(), "/canary/drill/export/")?
+            .ok_or_else(|| worker::Error::RustError("missing drill export scenario".to_string()))?;
+        let signing_key = match artifact_signing_key_required(env) {
+            Ok(key) => key,
+            Err(err) => {
+                let msg = err.to_string();
+                if msg.contains("disabled") {
+                    return Response::error(msg, 404);
+                }
+                return Err(err);
+            }
+        };
+        let key_id = artifact_signing_key_id(env);
+
+        let scenarios = drill_scenarios_for_target(target);
+        let mut drill_runs = Vec::with_capacity(scenarios.len());
+        for scenario in scenarios {
+            let run = run_drill_tick_for_scenario(env, scenario, drill_token.as_str()).await?;
+            drill_runs.push(run);
+        }
+
+        let limit = canary_audit_recent_limit_from_url(req.url()?.as_str())
+            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let audit_records = fetch_canary_audit_recent(env, limit).await?;
+        let payload = CanaryDrillArtifactPayload {
+            generated_at_ms: worker::Date::now().as_millis(),
+            scenario: drill_target_label(target).to_string(),
+            drill_runs,
+            audit_records,
+        };
+        let bundle =
+            sign_canary_drill_artifact_payload(payload, signing_key.as_str(), key_id.as_deref())
+                .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        Response::from_json(&bundle)
     }
 
     async fn run_canary_audit_recent(req: Request, env: &Env) -> Result<Response> {
@@ -1803,6 +2017,12 @@ mod wasm_runtime {
             return match run_canary_drill_tick(req, &env).await {
                 Ok(resp) => Ok(resp),
                 Err(err) => Response::error(format!("drill tick failed: {err}"), 500),
+            };
+        }
+        if req.method() == Method::Post && req.path().starts_with("/canary/drill/export/") {
+            return match run_canary_drill_export(req, &env).await {
+                Ok(resp) => Ok(resp),
+                Err(err) => Response::error(format!("drill export failed: {err}"), 500),
             };
         }
         if req.method() == Method::Get && req.path() == "/canary/audit/recent" {
@@ -2078,6 +2298,85 @@ mod tests {
         assert_eq!(record.failed_requests, 1);
         assert_eq!(record.p95_latency_ms, 120);
         assert_eq!(record.recorded_at_ms, 42);
+    }
+
+    #[test]
+    fn parse_canary_drill_export_target_supports_all_and_single() {
+        assert_eq!(
+            parse_canary_drill_export_target("all").unwrap(),
+            CanaryDrillExportTarget::All
+        );
+        assert_eq!(
+            parse_canary_drill_export_target(" promote ").unwrap(),
+            CanaryDrillExportTarget::Single(CanaryDrillScenario::Promote)
+        );
+        assert!(parse_canary_drill_export_target("").is_err());
+        assert!(parse_canary_drill_export_target("bad").is_err());
+    }
+
+    #[test]
+    fn drill_scenarios_for_all_target_is_deterministic() {
+        let scenarios = drill_scenarios_for_target(CanaryDrillExportTarget::All);
+        assert_eq!(
+            scenarios,
+            vec![
+                CanaryDrillScenario::Promote,
+                CanaryDrillScenario::Hold,
+                CanaryDrillScenario::Rollback
+            ]
+        );
+    }
+
+    #[test]
+    fn sign_canary_drill_artifact_payload_generates_verifiable_hmac() {
+        let payload = CanaryDrillArtifactPayload {
+            generated_at_ms: 1_706_000_000_000,
+            scenario: "all".to_string(),
+            drill_runs: vec![DrillTickSummary {
+                scenario: "promote".to_string(),
+                dry_run: true,
+                tick: TickSummary {
+                    decision: "Promote { to: Percent(25) }".to_string(),
+                    applied_canary_percent: Some(25),
+                    total_requests: 120,
+                    failed_requests: 0,
+                    p95_latency_ms: 120,
+                },
+            }],
+            audit_records: vec![CanaryAuditRecord {
+                recorded_at_ms: 1_706_000_000_001,
+                cron: "drill:promote".to_string(),
+                event_type: Some("scheduled".to_string()),
+                dry_run: true,
+                stable_version_id: "stable-v1".to_string(),
+                canary_version_id: "canary-v2".to_string(),
+                decision: "Promote { to: Percent(25) }".to_string(),
+                applied_canary_percent: Some(25),
+                total_requests: 120,
+                failed_requests: 0,
+                p95_latency_ms: 120,
+            }],
+        };
+        let signing_key = "artifact-signing-key";
+        let bundle =
+            sign_canary_drill_artifact_payload(payload, signing_key, Some("key-v1")).unwrap();
+        assert_eq!(bundle.signature.algorithm, "hmac-sha256");
+        assert_eq!(bundle.signature.key_id.as_deref(), Some("key-v1"));
+
+        let payload_bytes = serde_json::to_vec(&bundle.payload).unwrap();
+        let payload_hash = Sha256::digest(&payload_bytes);
+        assert_eq!(
+            bundle.signature.payload_sha256_hex,
+            hex_encode_lower(payload_hash.as_ref())
+        );
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(signing_key.as_bytes()).unwrap();
+        mac.update(&payload_bytes);
+        let expected_signature = hex_encode_lower(&mac.finalize().into_bytes());
+        assert_eq!(
+            bundle.signature.signature_hmac_sha256_hex,
+            expected_signature
+        );
     }
 
     #[test]
