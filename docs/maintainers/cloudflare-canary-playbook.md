@@ -20,12 +20,19 @@ This playbook defines how ZeroClaw evaluates canary safety before changing edge 
   - `crates/zeroclaw-edge/src/canary_metrics.rs` (`curl` JSON metrics source)
   - `crates/zeroclaw-edge/src/canary_tick.rs` (one-shot runtime path)
   - integration-style tests cover: local telemetry HTTP server -> canary decision -> traffic split apply command
+- Scheduler/trigger integration:
+  - `crates/zeroclaw-edge/src/canary_schedule.rs`
+  - fixed-interval trigger and scheduler loop policy (`continue_on_error`, max consecutive failures)
+  - integration-style tests for multi-tick promote -> rollback behavior
+- Cloudflare Cron binding:
+  - `crates/zeroclaw-edge/src/canary_cron.rs`
+  - validates scheduled event payloads and maps them to one canary tick execution
+  - integration-style test verifies cron payload -> traffic split command path
 - Deterministic CI gate:
   - `./scripts/ci/cloudflare_canary_check.sh`
 - WASM portability check included in canary gate.
 
-This PR does **not** yet run autonomous scheduled production canary loops.
-It now includes the one-shot runtime execution path, so the remaining work is scheduler wiring and production rollout policy operations.
+This PR now includes Cloudflare Cron event binding primitives, but does **not** yet include production deployment glue code for Worker runtime entrypoint wiring.
 
 ## Rollout Inputs
 
@@ -70,10 +77,12 @@ This validates:
 2. canary orchestration behavior (hold/promote/rollback/apply/persist)
 3. wasm32 compile viability for `zeroclaw-edge`
 4. one-shot telemetry/runtime integration behavior
+5. scheduled trigger behavior and multi-tick integration flow
+6. cron payload -> tick execution binding behavior
 
 ## Intended Next Step
 
-1. Trigger one-shot tick on a schedule (Cron trigger or external scheduler).
+1. Wire Worker runtime cron handler to call `run_cloudflare_cron_event(...)`.
 2. Feed production telemetry endpoint into `CurlCanaryMetricsSource`.
-3. Execute `run_cloudflare_one_shot_canary_tick(...)` each interval.
+3. Execute scheduler loop or one-shot cron flow in production with rollout policy defaults.
 4. Persist decision/audit events for postmortems and rollback drills.
