@@ -13,9 +13,7 @@ use crate::canary_orchestrator::{CanaryEventSink, CanaryTickOutcome};
 use crate::canary_tick::{
     build_cloudflare_canary_tick_service_with_runners, CloudflareOneShotCanaryConfig,
 };
-use crate::cloudflare_cli::CommandRunner;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::cloudflare_cli::SystemCommandRunner;
+use crate::cloudflare_cli::{CommandRunner, SystemCommandRunner};
 
 /// Raw Cloudflare scheduled event payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,7 +69,6 @@ pub struct CloudflareCronExecution {
 }
 
 /// Executes one canary tick from a Cloudflare cron event.
-#[cfg(not(target_arch = "wasm32"))]
 pub async fn run_cloudflare_cron_event<E>(
     event: CloudflareCronEvent,
     controller: CanaryController,
