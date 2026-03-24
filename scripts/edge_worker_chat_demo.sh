@@ -123,12 +123,54 @@ trap cleanup EXIT
 ) &
 worker_pid="$!"
 
-base_url="http://127.0.0.1:${port}"
-if ! wait_for_worker "${base_url}"; then
-  echo "worker did not become ready: ${base_url}" >&2
-  echo "--- wrangler log ---" >&2
-  sed -n "1,220p" "${log_file}" >&2
-  exit 1
+  if [[ ! -d "${worker_dir}" ]]; then
+    echo "worker directory not found: ${worker_dir}" >&2
+    exit 1
+  fi
+
+  bootstrap_openrouter_key
+  prepare_rustup_toolchain
+
+  env_file="$(mktemp /tmp/zeroclaw-edge-demo.XXXXXX)"
+  log_file_base="$(mktemp /tmp/zeroclaw-edge-demo-wrangler.XXXXXX)"
+  log_file="${log_file_base}.log"
+  mv "${log_file_base}" "${log_file}"
+  printf "OPENROUTER_API_KEY=%s\n" "${OPENROUTER_API_KEY}" >"${env_file}"
+  printf "ZEROCLAW_OPENROUTER_MODEL=%s\n" "${model}" >>"${env_file}"
+  if [[ -n "${ZEROCLAW_LONG_TERM_MEMORY_BASE_URL:-}" ]]; then
+    printf "ZEROCLAW_LONG_TERM_MEMORY_BASE_URL=%s\n" "${ZEROCLAW_LONG_TERM_MEMORY_BASE_URL}" >>"${env_file}"
+  fi
+  if [[ -n "${ZEROCLAW_LONG_TERM_MEMORY_RECALL_LIMIT:-}" ]]; then
+    printf "ZEROCLAW_LONG_TERM_MEMORY_RECALL_LIMIT=%s\n" "${ZEROCLAW_LONG_TERM_MEMORY_RECALL_LIMIT}" >>"${env_file}"
+  fi
+  if [[ -n "${ZEROCLAW_LONG_TERM_MEMORY_AUTH_TOKEN:-}" ]]; then
+    printf "ZEROCLAW_LONG_TERM_MEMORY_AUTH_TOKEN=%s\n" "${ZEROCLAW_LONG_TERM_MEMORY_AUTH_TOKEN}" >>"${env_file}"
+  fi
+
+  (
+    cd "${worker_dir}"
+    npx wrangler dev --port "${port}" --env-file "${env_file}" >"${log_file}" 2>&1
+  ) &
+  worker_pid="$!"
+
+  base_url="http://127.0.0.1:${port}"
+  if ! wait_for_worker "${base_url}"; then
+    echo "worker did not become ready: ${base_url}" >&2
+    echo "--- wrangler log ---" >&2
+    sed -n "1,220p" "${log_file}" >&2
+    exit 1
+  fi
+  echo "worker ready at ${base_url}"
+fi
+if [[ -z "${session_id}" && "${interactive}" == "1" ]]; then
+  session_id="local-demo-$(date +%s)"
+fi
+if [[ -n "${session_id}" ]]; then
+  echo "chat session_id=${session_id}"
+  if [[ "${reset_session}" == "1" || "${reset_session}" == "true" ]]; then
+    chat_reset "${base_url}"
+    echo "chat session reset"
+  fi
 fi
 
 echo "worker ready at ${base_url}"

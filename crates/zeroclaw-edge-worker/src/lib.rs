@@ -300,6 +300,16 @@ const MAX_CHAT_HISTORY_MESSAGES: usize = 100;
 const MAX_CHAT_SESSION_ID_LENGTH: usize = 128;
 #[cfg(any(test, target_arch = "wasm32"))]
 const SYSTEM_PROMPT: &str = "You are ZeroClaw Edge demo. Be concise and action-oriented.";
+#[cfg(any(test, target_arch = "wasm32"))]
+const ENV_LONG_TERM_MEMORY_BASE_URL: &str = "ZEROCLAW_LONG_TERM_MEMORY_BASE_URL";
+#[cfg(any(test, target_arch = "wasm32"))]
+const ENV_LONG_TERM_MEMORY_AUTH_TOKEN: &str = "ZEROCLAW_LONG_TERM_MEMORY_AUTH_TOKEN";
+#[cfg(any(test, target_arch = "wasm32"))]
+const ENV_LONG_TERM_MEMORY_RECALL_LIMIT: &str = "ZEROCLAW_LONG_TERM_MEMORY_RECALL_LIMIT";
+#[cfg(any(test, target_arch = "wasm32"))]
+const DEFAULT_LONG_TERM_MEMORY_RECALL_LIMIT: usize = 6;
+#[cfg(any(test, target_arch = "wasm32"))]
+const MAX_LONG_TERM_MEMORY_RECALL_LIMIT: usize = 25;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -345,6 +355,90 @@ impl ChatMessage {
             "role": self.role.as_str(),
             "content": self.content,
         })
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MemoryContextEntry {
+    key: String,
+    category: String,
+    content: String,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LongTermMemorySettings {
+    base_url: String,
+    auth_token: Option<String>,
+    recall_limit: usize,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn parse_long_term_memory_settings<F>(mut get: F) -> Result<Option<LongTermMemorySettings>>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let Some(base_url) = optional(&mut get, ENV_LONG_TERM_MEMORY_BASE_URL) else {
+        return Ok(None);
+    };
+    if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
+        return Err(anyhow!(
+            "{ENV_LONG_TERM_MEMORY_BASE_URL} must start with http:// or https://"
+        ));
+    }
+    let auth_token = optional(&mut get, ENV_LONG_TERM_MEMORY_AUTH_TOKEN);
+    let recall_limit = optional(&mut get, ENV_LONG_TERM_MEMORY_RECALL_LIMIT)
+        .as_deref()
+        .map(str::parse::<usize>)
+        .transpose()
+        .context("invalid ZEROCLAW_LONG_TERM_MEMORY_RECALL_LIMIT")?
+        .unwrap_or(DEFAULT_LONG_TERM_MEMORY_RECALL_LIMIT);
+    if recall_limit == 0 {
+        return Err(anyhow!(
+            "{ENV_LONG_TERM_MEMORY_RECALL_LIMIT} must be greater than zero"
+        ));
+    }
+    Ok(Some(LongTermMemorySettings {
+        base_url: base_url.trim_end_matches('/').to_string(),
+        auth_token,
+        recall_limit: recall_limit.min(MAX_LONG_TERM_MEMORY_RECALL_LIMIT),
+    }))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn truncate_chars(raw: &str, max_chars: usize) -> String {
+    raw.chars().take(max_chars).collect()
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn render_memory_context_prompt(entries: &[MemoryContextEntry]) -> Option<String> {
+    let mut lines = Vec::new();
+    for entry in entries {
+        let content = entry.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let content = truncate_chars(content, 240);
+        let key = entry.key.trim();
+        let category = entry.category.trim();
+        if !category.is_empty() && !key.is_empty() {
+            lines.push(format!("- [{category}] {key}: {content}"));
+        } else if !key.is_empty() {
+            lines.push(format!("- {key}: {content}"));
+        } else if !category.is_empty() {
+            lines.push(format!("- [{category}] {content}"));
+        } else {
+            lines.push(format!("- {content}"));
+        }
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "Relevant long-term memory from previous sessions:\n{}",
+            lines.join("\n")
+        ))
     }
 }
 
@@ -418,13 +512,20 @@ fn append_and_trim_chat_history(
 fn build_openrouter_messages(
     history: &[ChatMessage],
     user_message: &str,
+    long_term_memory: &[MemoryContextEntry],
 ) -> Result<Vec<serde_json::Value>> {
     let user_message = ChatMessage::new(ChatRole::User, user_message)?;
-    let mut messages = Vec::with_capacity(history.len() + 2);
+    let mut messages = Vec::with_capacity(history.len() + long_term_memory.len() + 2);
     messages.push(serde_json::json!({
         "role": "system",
         "content": SYSTEM_PROMPT,
     }));
+    if let Some(memory_prompt) = render_memory_context_prompt(long_term_memory) {
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": memory_prompt,
+        }));
+    }
     messages.extend(history.iter().map(ChatMessage::to_openrouter_value));
     messages.push(user_message.to_openrouter_value());
     Ok(messages)
@@ -518,6 +619,34 @@ mod wasm_runtime {
     struct AppendSessionHistoryRequest {
         messages: Vec<ChatMessage>,
         max_messages: usize,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct MemoryStoreRequest<'a> {
+        key: &'a str,
+        content: &'a str,
+        category: &'a str,
+        session_id: Option<&'a str>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct MemoryRecallRequest<'a> {
+        query: &'a str,
+        limit: usize,
+        session_id: Option<&'a str>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct MemoryRecallResponse {
+        #[serde(default)]
+        entries: Vec<MemoryRecallEntry>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct MemoryRecallEntry {
+        key: String,
+        category: String,
+        content: String,
     }
 
     #[durable_object]
@@ -676,6 +805,129 @@ mod wasm_runtime {
             return Err(worker::Error::RustError(format!(
                 "session clear failed with status {status}: {body}"
             )));
+        }
+        Ok(())
+    }
+
+    async fn send_memory_request(
+        settings: &LongTermMemorySettings,
+        method: Method,
+        path: &str,
+        body: Option<String>,
+    ) -> Result<Response> {
+        let mut init = RequestInit::new();
+        init.with_method(method);
+        let headers = Headers::new();
+        headers
+            .set("Content-Type", "application/json")
+            .map_err(|e| {
+                worker::Error::RustError(format!("failed setting memory content-type: {e}"))
+            })?;
+        if let Some(token) = settings.auth_token.as_deref() {
+            headers
+                .set("Authorization", &format!("Bearer {token}"))
+                .map_err(|e| {
+                    worker::Error::RustError(format!("failed setting memory auth header: {e}"))
+                })?;
+        }
+        init.with_headers(headers);
+        if let Some(body) = body {
+            init.with_body(Some(body.into()));
+        }
+        let url = format!("{}/{}", settings.base_url, path.trim_start_matches('/'));
+        let req = Request::new_with_init(url.as_str(), &init).map_err(|e| {
+            worker::Error::RustError(format!("failed to build memory request: {e}"))
+        })?;
+        Fetch::Request(req)
+            .send()
+            .await
+            .map_err(|e| worker::Error::RustError(format!("memory request failed: {e}")))
+    }
+
+    fn turn_memory_key(role: &str, session_id: Option<&str>) -> String {
+        let session = session_id.unwrap_or("global");
+        let safe_session: String = session
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        format!(
+            "edge_chat:{safe_session}:{role}:{}",
+            worker::Date::now().as_millis()
+        )
+    }
+
+    async fn fetch_long_term_memory(
+        settings: &LongTermMemorySettings,
+        query: &str,
+    ) -> Result<Vec<MemoryContextEntry>> {
+        let payload = serde_json::to_string(&MemoryRecallRequest {
+            query,
+            limit: settings.recall_limit,
+            session_id: None,
+        })
+        .map_err(|e| {
+            worker::Error::RustError(format!("failed serializing memory recall payload: {e}"))
+        })?;
+        let response =
+            send_memory_request(settings, Method::Post, "/v1/memory/recall", Some(payload)).await?;
+        let parsed: MemoryRecallResponse =
+            parse_required_json_response(response, "long-term memory recall").await?;
+        Ok(parsed
+            .entries
+            .into_iter()
+            .filter_map(|entry| {
+                let content = entry.content.trim().to_string();
+                if content.is_empty() {
+                    return None;
+                }
+                Some(MemoryContextEntry {
+                    key: entry.key.trim().to_string(),
+                    category: entry.category.trim().to_string(),
+                    content,
+                })
+            })
+            .collect())
+    }
+
+    async fn store_long_term_turn(
+        settings: &LongTermMemorySettings,
+        session_id: Option<&str>,
+        user_message: &str,
+        assistant_reply: &str,
+    ) -> Result<()> {
+        let store_records = [
+            (turn_memory_key("user", session_id), user_message),
+            (turn_memory_key("assistant", session_id), assistant_reply),
+        ];
+        for (key, content) in store_records {
+            if content.trim().is_empty() {
+                continue;
+            }
+            let payload = serde_json::to_string(&MemoryStoreRequest {
+                key: key.as_str(),
+                content: content.trim(),
+                category: "conversation",
+                session_id,
+            })
+            .map_err(|e| {
+                worker::Error::RustError(format!("failed serializing memory store payload: {e}"))
+            })?;
+            let mut response =
+                send_memory_request(settings, Method::Post, "/v1/memory/store", Some(payload))
+                    .await?;
+            let status = response.status_code();
+            if !(200..=299).contains(&status) {
+                let body = response.text().await.unwrap_or_else(|_| String::new());
+                return Err(worker::Error::RustError(format!(
+                    "long-term memory store failed with status {status}: {body}"
+                )));
+            }
         }
         Ok(())
     }
@@ -1012,6 +1264,30 @@ mod wasm_runtime {
             .or_else(|| env.var(ENV_OPENROUTER_MODEL).ok().map(|v| v.to_string()))
             .unwrap_or_else(|| "openai/gpt-4o-mini".to_string());
 
+        let session_history = if let Some(session_id) = session_id.as_deref() {
+            fetch_session_history(env, session_id).await?
+        } else {
+            Vec::new()
+        };
+        let long_term_memory_settings =
+            parse_long_term_memory_settings(|key| env.var(key).ok().map(|v| v.to_string()))
+                .map_err(|e| worker::Error::RustError(format!("invalid memory settings: {e}")))?;
+        let long_term_memory = if let Some(settings) = long_term_memory_settings.as_ref() {
+            match fetch_long_term_memory(settings, &chat_req.message).await {
+                Ok(entries) => entries,
+                Err(err) => {
+                    console_error!("long-term memory recall failed: {}", err);
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        let openrouter_messages =
+            build_openrouter_messages(&session_history, &chat_req.message, &long_term_memory)
+                .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
         let payload = serde_json::json!({
             "model": model,
             "messages": [
@@ -1068,7 +1344,51 @@ mod wasm_runtime {
             .ok_or_else(|| {
                 worker::Error::RustError("openrouter returned no response choices".to_string())
             })?;
-        Response::from_json(&ChatResponse { model, reply })
+
+        let history_messages = if let Some(session_id) = session_id.as_deref() {
+            let user_message = ChatMessage::new(ChatRole::User, chat_req.message.clone())
+                .map_err(|e| worker::Error::RustError(e.to_string()))?;
+            let assistant_message = ChatMessage::new(ChatRole::Assistant, reply.clone())
+                .map_err(|e| worker::Error::RustError(e.to_string()))?;
+            let persisted = append_session_history(
+                env,
+                session_id,
+                vec![user_message, assistant_message],
+                history_limit,
+            )
+            .await?;
+            persisted.len()
+        } else {
+            0
+        };
+
+        if let Some(settings) = long_term_memory_settings.as_ref() {
+            if let Err(err) =
+                store_long_term_turn(settings, session_id.as_deref(), &chat_req.message, &reply)
+                    .await
+            {
+                console_error!("long-term memory store failed: {}", err);
+            }
+        }
+
+        Response::from_json(&ChatResponse {
+            model,
+            reply,
+            session_id,
+            history_messages,
+        })
+    }
+
+    async fn run_chat_reset(mut req: Request, env: &Env) -> Result<Response> {
+        let payload: ChatResetRequest = req
+            .json()
+            .await
+            .map_err(|e| worker::Error::RustError(format!("invalid reset payload: {e}")))?;
+        let session_id = normalize_session_id(Some(payload.session_id.as_str()))
+            .map_err(|e| worker::Error::RustError(format!("invalid session_id: {e}")))?
+            .ok_or_else(|| worker::Error::RustError("session_id is required".to_string()))?;
+        clear_session_history(env, session_id.as_str()).await?;
+        Response::ok("ok")
     }
 
     async fn run_canary_drill_metrics(req: Request, env: &Env) -> Result<Response> {
@@ -1265,13 +1585,68 @@ mod tests {
             ChatMessage::new(ChatRole::User, "hello").unwrap(),
             ChatMessage::new(ChatRole::Assistant, "hi").unwrap(),
         ];
-        let payload = build_openrouter_messages(&history, "what did I ask?").unwrap();
+        let payload = build_openrouter_messages(&history, "what did I ask?", &[]).unwrap();
         assert_eq!(payload.len(), 4);
         assert_eq!(payload[0]["role"], "system");
         assert_eq!(payload[1]["role"], "user");
         assert_eq!(payload[1]["content"], "hello");
         assert_eq!(payload[2]["role"], "assistant");
         assert_eq!(payload[3]["content"], "what did I ask?");
+    }
+
+    #[test]
+    fn parse_long_term_memory_settings_is_optional_and_bounded() {
+        let disabled = parse_long_term_memory_settings(|_key| None).unwrap();
+        assert!(disabled.is_none());
+
+        let mut env = HashMap::<String, String>::new();
+        env.insert(
+            ENV_LONG_TERM_MEMORY_BASE_URL.to_string(),
+            "https://memory.example/service/".to_string(),
+        );
+        env.insert(
+            ENV_LONG_TERM_MEMORY_AUTH_TOKEN.to_string(),
+            "token-abc".to_string(),
+        );
+        env.insert(
+            ENV_LONG_TERM_MEMORY_RECALL_LIMIT.to_string(),
+            "999".to_string(),
+        );
+        let settings = parse_long_term_memory_settings(|key| env.get(key).cloned())
+            .unwrap()
+            .unwrap();
+        assert_eq!(settings.base_url, "https://memory.example/service");
+        assert_eq!(settings.auth_token.as_deref(), Some("token-abc"));
+        assert_eq!(settings.recall_limit, MAX_LONG_TERM_MEMORY_RECALL_LIMIT);
+    }
+
+    #[test]
+    fn build_openrouter_messages_includes_long_term_memory_context() {
+        let history = vec![ChatMessage::new(ChatRole::User, "hello").unwrap()];
+        let memory = vec![
+            MemoryContextEntry {
+                key: "user:favorite_language".to_string(),
+                category: "core".to_string(),
+                content: "Rust".to_string(),
+            },
+            MemoryContextEntry {
+                key: "project:status".to_string(),
+                category: "conversation".to_string(),
+                content: "moving to edge".to_string(),
+            },
+        ];
+        let payload =
+            build_openrouter_messages(&history, "what should I do next?", &memory).unwrap();
+        assert_eq!(payload.len(), 4);
+        assert_eq!(payload[0]["role"], "system");
+        assert_eq!(payload[1]["role"], "system");
+        assert!(payload[1]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Relevant long-term memory"));
+        assert_eq!(payload[2]["role"], "user");
+        assert_eq!(payload[2]["content"], "hello");
+        assert_eq!(payload[3]["role"], "user");
     }
 
     #[test]
