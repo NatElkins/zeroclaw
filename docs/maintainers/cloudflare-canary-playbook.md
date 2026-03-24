@@ -145,9 +145,13 @@ The Worker exposes authenticated drill endpoints:
 
 - `GET /canary/drill/metrics/{promote|hold|rollback}`
 - `POST /canary/drill/tick/{promote|hold|rollback}`
+- `GET /canary/audit/recent?limit=<n>`
+- `POST /canary/audit/clear`
 
 These use a deterministic metrics payload per scenario and force dry-run traffic updates
 so drills can exercise the full decision/apply path without mutating production traffic.
+Each tick is also persisted in Durable Object audit storage and retrievable from
+`/canary/audit/recent`.
 
 ### Prerequisites
 
@@ -167,6 +171,11 @@ ZEROCLAW_CANARY_DRILL_TOKEN="<your-drill-token>" \
 ./scripts/edge_worker_canary_drill.sh all
 ```
 
+The drill script now verifies both:
+
+1. canary decision class (`Promote`/`Hold`/`Rollback`)
+2. matching persisted decision in `/canary/audit/recent`
+
 Expected decision classes:
 
 - `promote` -> `Promote`
@@ -182,7 +191,14 @@ curl -fsS -X POST "https://<worker>.<subdomain>.workers.dev/canary/drill/tick/ro
 
 Persist the JSON response in incident/audit notes as rollback drill evidence.
 
+To inspect recent persisted audit records directly:
+
+```bash
+curl -fsS "https://<worker>.<subdomain>.workers.dev/canary/audit/recent?limit=20" \
+  -H "x-zeroclaw-drill-token: <your-drill-token>"
+```
+
 ## Intended Next Step
 
-1. Persist canary decision events to durable audit storage for postmortems.
-2. Add remote drill evidence auto-export into a signed incident artifact bundle.
+1. Add remote drill evidence auto-export into a signed incident artifact bundle.
+2. Add retention + export policies for canary audit records (windowing and archival).
