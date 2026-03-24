@@ -1,0 +1,32 @@
+name = "zeroclaw-edge-worker"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-03-24"
+workers_dev = true
+
+[build]
+command = "cargo install -q worker-build && worker-build --release"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+# Required runtime settings.
+ZEROCLAW_CANARY_STABLE_VERSION_ID = "stable-v1"
+ZEROCLAW_CANARY_CANARY_VERSION_ID = "canary-v2"
+ZEROCLAW_CANARY_WORKER_NAME = "zeroclaw-edge-worker"
+ZEROCLAW_CANARY_METRICS_ENDPOINT = "https://example.com/metrics"
+CLOUDFLARE_ACCOUNT_ID = "replace-me"
+
+# Optional runtime tuning.
+ZEROCLAW_CANARY_MESSAGE_PREFIX = "zeroclaw canary"
+ZEROCLAW_CANARY_DRY_RUN = "true"
+ZEROCLAW_CANARY_STAGES = "10:1,25:1,100:1"
+ZEROCLAW_CANARY_MAX_ERROR_RATE_BPS = "100"
+ZEROCLAW_CANARY_MAX_P95_LATENCY_MS = "500"
+ZEROCLAW_CANARY_MIN_REQUEST_COUNT = "10"
+
+# Secret required:
+# CLOUDFLARE_API_TOKEN (set via `wrangler secret put CLOUDFLARE_API_TOKEN`)
+# Optional secret:
+# ZEROCLAW_CANARY_METRICS_BEARER_TOKEN
+

@@ -22,19 +22,19 @@ use crate::canary::{
 };
 
 /// Fetches the latest canary metrics window.
-#[async_trait]
+#[async_trait(?Send)]
 pub trait CanaryMetricsSource: Send + Sync {
     async fn current_window(&self) -> Result<CanaryMetrics>;
 }
 
 /// Applies traffic-split updates to the deployment target.
-#[async_trait]
+#[async_trait(?Send)]
 pub trait CanaryTrafficClient: Send + Sync {
     async fn apply_split(&self, update: CloudflareTrafficUpdate) -> Result<()>;
 }
 
 /// Receives canary tick outcomes for audit/observability.
-#[async_trait]
+#[async_trait(?Send)]
 pub trait CanaryEventSink: Send + Sync {
     async fn record(&self, outcome: &CanaryTickOutcome) -> Result<()>;
 }
@@ -42,7 +42,7 @@ pub trait CanaryEventSink: Send + Sync {
 /// No-op event sink for tests or minimal setups.
 pub struct NoopCanaryEventSink;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl CanaryEventSink for NoopCanaryEventSink {
     async fn record(&self, _outcome: &CanaryTickOutcome) -> Result<()> {
         Ok(())
@@ -194,7 +194,7 @@ where
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<M> CanaryEventSink for MemoryCanaryEventSink<M>
 where
     M: Memory,
@@ -285,7 +285,7 @@ mod tests {
         }
     }
 
-    #[async_trait]
+    #[async_trait(?Send)]
     impl CanaryMetricsSource for QueueMetricsSource {
         async fn current_window(&self) -> Result<CanaryMetrics> {
             self.queue
@@ -301,7 +301,7 @@ mod tests {
         updates: Mutex<Vec<CloudflareTrafficUpdate>>,
     }
 
-    #[async_trait]
+    #[async_trait(?Send)]
     impl CanaryTrafficClient for RecordingTrafficClient {
         async fn apply_split(&self, update: CloudflareTrafficUpdate) -> Result<()> {
             self.updates.lock().unwrap().push(update);
@@ -314,7 +314,7 @@ mod tests {
         events: Mutex<Vec<CanaryTickOutcome>>,
     }
 
-    #[async_trait]
+    #[async_trait(?Send)]
     impl CanaryEventSink for RecordingEventSink {
         async fn record(&self, outcome: &CanaryTickOutcome) -> Result<()> {
             self.events.lock().unwrap().push(outcome.clone());

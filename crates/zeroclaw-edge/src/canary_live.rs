@@ -6,14 +6,15 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
 
 use crate::canary::CanaryController;
 use crate::canary_orchestrator::{
     CanaryEventSink, CanaryMetricsSource, CanaryOrchestrator, CanaryVersionSet,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::cloudflare_cli::SystemCommandRunner;
 use crate::cloudflare_cli::{
-    CloudflareWranglerConfig, CloudflareWranglerTrafficClient, CommandRunner, SystemCommandRunner,
+    CloudflareWranglerConfig, CloudflareWranglerTrafficClient, CommandRunner,
 };
 
 /// Inputs required to wire a live Cloudflare canary orchestrator.
@@ -63,6 +64,7 @@ impl CloudflareCanaryWiringConfig {
 
 /// Builds a live Cloudflare canary orchestrator backed by system command
 /// execution.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_cloudflare_wrangler_orchestrator<M, E>(
     controller: CanaryController,
     metrics_source: Arc<M>,
@@ -136,8 +138,9 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait(?Send)]
     impl CommandRunner for RecordingRunner {
-        fn run(
+        async fn run(
             &self,
             program: &str,
             args: &[String],
@@ -159,7 +162,7 @@ mod tests {
         metrics: CanaryMetrics,
     }
 
-    #[async_trait]
+    #[async_trait::async_trait(?Send)]
     impl CanaryMetricsSource for FixedMetricsSource {
         async fn current_window(&self) -> Result<CanaryMetrics> {
             Ok(self.metrics)
