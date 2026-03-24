@@ -132,10 +132,17 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - add authenticated edge->native delegate call boundary for filesystem/shell tool fallback
    - keep edge runtime capability-safe while enabling heavy operations through delegation
 22. Shared long-term memory backend integration
-   - status: pending
+   - status: complete in stack
    - keep Durable Object history as short-term session memory
    - wire HTTP memory backend (TigerFS-like service) for durable cross-session memory
    - add reconciliation tests across edge/native readers
+   - implementation notes:
+     - added shared HTTP memory client in `crates/zeroclaw-edge/src/memory_http.rs`
+       implementing `zeroclaw_core::memory::Memory` with typed config/token invariants
+     - added local integration + reconciliation coverage using real `curl` and a local
+       HTTP memory service (`memory_http::tests::edge_and_native_readers_reconcile_over_shared_memory_service`)
+     - wired optional long-term memory recall/store in worker `/chat` path
+       (`ZEROCLAW_LONG_TERM_MEMORY_BASE_URL`, optional bearer token + recall limit)
 
 ## Milestones And Exit Criteria
 
