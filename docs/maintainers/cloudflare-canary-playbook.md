@@ -80,6 +80,33 @@ This validates:
 5. scheduled trigger behavior and multi-tick integration flow
 6. cron payload -> tick execution binding behavior
 
+## Local Worker Chat Demo (End-To-End)
+
+For a minimal Worker runtime call/response demo using OpenRouter:
+
+```bash
+./scripts/edge_worker_chat_demo.sh
+```
+
+Default behavior:
+
+1. resolves `OPENROUTER_API_KEY` from environment, or falls back to `~/Projects/moneydevkit/open-money/.env.local`
+2. starts `wrangler dev` for `crates/zeroclaw-edge-worker`
+3. sends one `/chat` request with prompt `reply with exactly: edge demo ok`
+4. prints the JSON response and exits
+
+To run interactive call/response mode:
+
+```bash
+ZEROCLAW_EDGE_DEMO_INTERACTIVE=1 ./scripts/edge_worker_chat_demo.sh
+```
+
+To override model or local port:
+
+```bash
+ZEROCLAW_OPENROUTER_MODEL=openai/gpt-4o-mini ZEROCLAW_EDGE_DEMO_PORT=8787 ./scripts/edge_worker_chat_demo.sh "summarize wasm advantages in 2 bullets"
+```
+
 ## Intended Next Step
 
 1. Wire Worker runtime cron handler to call `run_cloudflare_cron_event(...)`.
