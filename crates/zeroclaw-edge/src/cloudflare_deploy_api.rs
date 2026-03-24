@@ -17,7 +17,6 @@ pub struct DeployRequest {
     pub worker_name: String,
     pub versions: Vec<VersionTraffic>,
     pub message: Option<String>,
-    pub dry_run: bool,
 }
 
 /// Parse command program/args emitted by `CloudflareWranglerTrafficClient` into
@@ -34,7 +33,6 @@ pub fn parse_wrangler_versions_deploy(program: &str, args: &[String]) -> Result<
     let mut versions = Vec::new();
     let mut worker_name: Option<String> = None;
     let mut message: Option<String> = None;
-    let mut dry_run = false;
     let mut i = 2;
     while i < normalized.len() {
         let token = &normalized[i];
@@ -59,10 +57,6 @@ pub fn parse_wrangler_versions_deploy(program: &str, args: &[String]) -> Result<
                 message = Some(value.clone());
                 i += 2;
             }
-            "--dry-run" => {
-                dry_run = true;
-                i += 1;
-            }
             _ => {
                 i += 1;
             }
@@ -86,7 +80,6 @@ pub fn parse_wrangler_versions_deploy(program: &str, args: &[String]) -> Result<
         worker_name,
         versions,
         message,
-        dry_run,
     })
 }
 
@@ -179,7 +172,6 @@ mod tests {
             }
         );
         assert_eq!(req.message.as_deref(), Some("zc canary"));
-        assert!(!req.dry_run);
     }
 
     #[test]
@@ -198,22 +190,6 @@ mod tests {
         let req = parse_wrangler_versions_deploy("npx", &args).unwrap();
         assert_eq!(req.worker_name, "worker-a");
         assert_eq!(req.versions.len(), 2);
-        assert!(!req.dry_run);
-    }
-
-    #[test]
-    fn parses_dry_run_flag() {
-        let args = vec![
-            "versions".to_string(),
-            "deploy".to_string(),
-            "a@40%".to_string(),
-            "b@60%".to_string(),
-            "--name".to_string(),
-            "worker-a".to_string(),
-            "--dry-run".to_string(),
-        ];
-        let req = parse_wrangler_versions_deploy("wrangler", &args).unwrap();
-        assert!(req.dry_run);
     }
 
     #[test]
@@ -245,7 +221,6 @@ mod tests {
                 },
             ],
             message: Some("hello".to_string()),
-            dry_run: false,
         };
         let body = build_deployments_api_body(&req);
         assert_eq!(body["strategy"], "percentage");
