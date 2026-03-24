@@ -11,10 +11,10 @@ use std::sync::Arc;
 use zeroclaw_edge::canary::{
     BasisPoints, CanaryController, CanaryPlan, CanaryStage, CanaryThresholds, Percent,
 };
+#[cfg(any(test, target_arch = "wasm32"))]
+use zeroclaw_edge::canary_cron::CloudflareCronEventPayload;
 #[cfg(target_arch = "wasm32")]
-use zeroclaw_edge::canary_cron::{
-    run_cloudflare_cron_event_with_runners, CloudflareCronEvent, CloudflareCronEventPayload,
-};
+use zeroclaw_edge::canary_cron::{run_cloudflare_cron_event_with_runners, CloudflareCronEvent};
 #[cfg(target_arch = "wasm32")]
 use zeroclaw_edge::canary_live::CloudflareCanaryWiringConfig;
 #[cfg(target_arch = "wasm32")]
@@ -60,6 +60,16 @@ const ENV_CLOUDFLARE_ACCOUNT_ID: &str = "CLOUDFLARE_ACCOUNT_ID";
 const ENV_CLOUDFLARE_API_TOKEN: &str = "CLOUDFLARE_API_TOKEN";
 #[cfg(target_arch = "wasm32")]
 const ENV_CANARY_DRILL_TOKEN: &str = "ZEROCLAW_CANARY_DRILL_TOKEN";
+#[cfg(target_arch = "wasm32")]
+const ENV_CANARY_AUDIT_MAX_RECORDS: &str = "ZEROCLAW_CANARY_AUDIT_MAX_RECORDS";
+#[cfg(any(test, target_arch = "wasm32"))]
+const DEFAULT_CANARY_AUDIT_MAX_RECORDS: usize = 500;
+#[cfg(any(test, target_arch = "wasm32"))]
+const MAX_CANARY_AUDIT_MAX_RECORDS: usize = 5_000;
+#[cfg(any(test, target_arch = "wasm32"))]
+const DEFAULT_CANARY_AUDIT_RECENT_LIMIT: usize = 20;
+#[cfg(any(test, target_arch = "wasm32"))]
+const MAX_CANARY_AUDIT_RECENT_LIMIT: usize = 200;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,6 +255,102 @@ enum CanaryDrillScenario {
     Promote,
     Hold,
     Rollback,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryAuditRecord {
+    recorded_at_ms: u64,
+    cron: String,
+    event_type: Option<String>,
+    dry_run: bool,
+    stable_version_id: String,
+    canary_version_id: String,
+    decision: String,
+    applied_canary_percent: Option<u8>,
+    total_requests: u64,
+    failed_requests: u64,
+    p95_latency_ms: u32,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryAuditRecentResponse {
+    records: Vec<CanaryAuditRecord>,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryAuditAppendRequest {
+    record: CanaryAuditRecord,
+    max_records: usize,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn parse_canary_audit_max_records(raw: Option<&str>) -> Result<usize> {
+    let parsed = raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::parse::<usize>)
+        .transpose()
+        .context("invalid ZEROCLAW_CANARY_AUDIT_MAX_RECORDS")?
+        .unwrap_or(DEFAULT_CANARY_AUDIT_MAX_RECORDS);
+    if parsed == 0 {
+        return Err(anyhow!(
+            "ZEROCLAW_CANARY_AUDIT_MAX_RECORDS must be greater than zero"
+        ));
+    }
+    Ok(parsed.min(MAX_CANARY_AUDIT_MAX_RECORDS))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn parse_canary_audit_recent_limit(raw: Option<&str>) -> Result<usize> {
+    let parsed = raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::parse::<usize>)
+        .transpose()
+        .context("invalid canary audit limit")?
+        .unwrap_or(DEFAULT_CANARY_AUDIT_RECENT_LIMIT);
+    if parsed == 0 {
+        return Err(anyhow!("canary audit limit must be greater than zero"));
+    }
+    Ok(parsed.min(MAX_CANARY_AUDIT_RECENT_LIMIT))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn canary_audit_recent_limit_from_url(url: &str) -> Result<usize> {
+    let query = url.split_once('?').map(|(_, query)| query);
+    let Some(query) = query else {
+        return parse_canary_audit_recent_limit(None);
+    };
+    let limit = query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == "limit").then_some(value)
+    });
+    parse_canary_audit_recent_limit(limit)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn build_canary_audit_record(
+    settings: &WorkerCanarySettings,
+    payload: &CloudflareCronEventPayload,
+    summary: &TickSummary,
+    recorded_at_ms: u64,
+) -> CanaryAuditRecord {
+    CanaryAuditRecord {
+        recorded_at_ms,
+        cron: payload.cron.clone(),
+        event_type: payload.r#type.clone(),
+        dry_run: settings.dry_run,
+        stable_version_id: settings.stable_version_id.clone(),
+        canary_version_id: settings.canary_version_id.clone(),
+        decision: summary.decision.clone(),
+        applied_canary_percent: summary.applied_canary_percent,
+        total_requests: summary.total_requests,
+        failed_requests: summary.failed_requests,
+        p95_latency_ms: summary.p95_latency_ms,
+    }
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -531,7 +637,7 @@ fn build_openrouter_messages(
     Ok(messages)
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize)]
 struct TickSummary {
     decision: String,
@@ -568,6 +674,9 @@ mod wasm_runtime {
     const CHAT_SESSIONS_BINDING: &str = "ZEROCLAW_CHAT_SESSIONS";
     const CHAT_HISTORY_STORAGE_KEY: &str = "messages";
     const CHAT_DO_INTERNAL_ORIGIN: &str = "https://zeroclaw-chat-session.internal";
+    const CANARY_AUDIT_BINDING: &str = "ZEROCLAW_CANARY_AUDIT";
+    const CANARY_AUDIT_STORAGE_KEY: &str = "records";
+    const CANARY_AUDIT_DO_INTERNAL_ORIGIN: &str = "https://zeroclaw-canary-audit.internal";
     const DRILL_TOKEN_HEADER: &str = "x-zeroclaw-drill-token";
 
     #[derive(Debug, Deserialize)]
@@ -707,8 +816,78 @@ mod wasm_runtime {
         }
     }
 
+    #[durable_object]
+    pub struct CanaryAuditObject {
+        state: State,
+    }
+
+    impl DurableObject for CanaryAuditObject {
+        fn new(state: State, _env: Env) -> Self {
+            Self { state }
+        }
+
+        async fn fetch(&self, mut req: Request) -> Result<Response> {
+            match (req.method(), req.path().as_str()) {
+                (Method::Post, "/append") => {
+                    let append_req: CanaryAuditAppendRequest = req.json().await.map_err(|e| {
+                        worker::Error::RustError(format!(
+                            "invalid canary audit append payload: {e}"
+                        ))
+                    })?;
+                    if append_req.max_records == 0 {
+                        return Response::error("max_records must be greater than zero", 400);
+                    }
+                    let mut records = self
+                        .state
+                        .storage()
+                        .get::<Vec<CanaryAuditRecord>>(CANARY_AUDIT_STORAGE_KEY)
+                        .await?
+                        .unwrap_or_default();
+                    records.push(append_req.record);
+                    if records.len() > append_req.max_records {
+                        records = records.split_off(records.len() - append_req.max_records);
+                    }
+                    self.state
+                        .storage()
+                        .put(CANARY_AUDIT_STORAGE_KEY, &records)
+                        .await?;
+                    Response::ok("ok")
+                }
+                (Method::Get, "/recent") => {
+                    let limit = canary_audit_recent_limit_from_url(req.url()?.as_str())
+                        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+                    let records = self
+                        .state
+                        .storage()
+                        .get::<Vec<CanaryAuditRecord>>(CANARY_AUDIT_STORAGE_KEY)
+                        .await?
+                        .unwrap_or_default();
+                    let mut records = if records.len() > limit {
+                        records[records.len() - limit..].to_vec()
+                    } else {
+                        records
+                    };
+                    records.reverse();
+                    Response::from_json(&CanaryAuditRecentResponse { records })
+                }
+                (Method::Post, "/clear") => {
+                    self.state
+                        .storage()
+                        .delete(CANARY_AUDIT_STORAGE_KEY)
+                        .await?;
+                    Response::ok("ok")
+                }
+                _ => Response::error("Not Found", 404),
+            }
+        }
+    }
+
     fn chat_do_url(path: &str) -> String {
         format!("{CHAT_DO_INTERNAL_ORIGIN}{path}")
+    }
+
+    fn canary_audit_do_url(path: &str) -> String {
+        format!("{CANARY_AUDIT_DO_INTERNAL_ORIGIN}{path}")
     }
 
     async fn parse_required_json_response<T: DeserializeOwned>(
@@ -804,6 +983,92 @@ mod wasm_runtime {
             let body = resp.text().await.unwrap_or_else(|_| String::new());
             return Err(worker::Error::RustError(format!(
                 "session clear failed with status {status}: {body}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn canary_audit_stub(env: &Env) -> Result<Stub> {
+        let namespace = env.durable_object(CANARY_AUDIT_BINDING).map_err(|e| {
+            worker::Error::RustError(format!(
+                "missing durable object binding {CANARY_AUDIT_BINDING}: {e}"
+            ))
+        })?;
+        let object_id = namespace.id_from_name("global").map_err(|e| {
+            worker::Error::RustError(format!(
+                "failed creating canary audit durable object id: {e}"
+            ))
+        })?;
+        object_id.get_stub().map_err(|e| {
+            worker::Error::RustError(format!("failed getting canary audit object stub: {e}"))
+        })
+    }
+
+    async fn append_canary_audit_record(
+        env: &Env,
+        record: CanaryAuditRecord,
+        max_records: usize,
+    ) -> Result<()> {
+        let stub = canary_audit_stub(env).await?;
+        let body = serde_json::to_string(&CanaryAuditAppendRequest {
+            record,
+            max_records,
+        })
+        .map_err(|e| {
+            worker::Error::RustError(format!("failed serializing canary audit append body: {e}"))
+        })?;
+        let mut init = RequestInit::new();
+        init.with_method(Method::Post);
+        let headers = Headers::new();
+        headers
+            .set("Content-Type", "application/json")
+            .map_err(|e| worker::Error::RustError(format!("failed setting content-type: {e}")))?;
+        init.with_headers(headers);
+        init.with_body(Some(body.into()));
+        let req = Request::new_with_init(&canary_audit_do_url("/append"), &init).map_err(|e| {
+            worker::Error::RustError(format!("failed creating canary audit append request: {e}"))
+        })?;
+        let mut resp = stub
+            .fetch_with_request(req)
+            .await
+            .map_err(|e| worker::Error::RustError(format!("canary audit append failed: {e}")))?;
+        let status = resp.status_code();
+        if !(200..=299).contains(&status) {
+            let body = resp.text().await.unwrap_or_else(|_| String::new());
+            return Err(worker::Error::RustError(format!(
+                "canary audit append failed with status {status}: {body}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn fetch_canary_audit_recent(env: &Env, limit: usize) -> Result<Vec<CanaryAuditRecord>> {
+        let stub = canary_audit_stub(env).await?;
+        let url = canary_audit_do_url(format!("/recent?limit={limit}").as_str());
+        let resp = stub.fetch_with_str(url.as_str()).await.map_err(|e| {
+            worker::Error::RustError(format!("canary audit recent fetch failed: {e}"))
+        })?;
+        let payload: CanaryAuditRecentResponse =
+            parse_required_json_response(resp, "canary audit recent fetch").await?;
+        Ok(payload.records)
+    }
+
+    async fn clear_canary_audit_records(env: &Env) -> Result<()> {
+        let stub = canary_audit_stub(env).await?;
+        let mut init = RequestInit::new();
+        init.with_method(Method::Post);
+        let req = Request::new_with_init(&canary_audit_do_url("/clear"), &init).map_err(|e| {
+            worker::Error::RustError(format!("failed creating canary audit clear request: {e}"))
+        })?;
+        let mut resp = stub
+            .fetch_with_request(req)
+            .await
+            .map_err(|e| worker::Error::RustError(format!("canary audit clear failed: {e}")))?;
+        let status = resp.status_code();
+        if !(200..=299).contains(&status) {
+            let body = resp.text().await.unwrap_or_else(|_| String::new());
+            return Err(worker::Error::RustError(format!(
+                "canary audit clear failed with status {status}: {body}"
             )));
         }
         Ok(())
@@ -988,6 +1253,39 @@ mod wasm_runtime {
             ));
         }
         Ok(required)
+    }
+
+    fn authorize_admin_request(req: &Request, env: &Env) -> Result<()> {
+        let Some(required) = drill_token_required(env) else {
+            return Ok(());
+        };
+        let provided_header = req
+            .headers()
+            .get(DRILL_TOKEN_HEADER)
+            .map_err(|e| worker::Error::RustError(format!("failed reading drill header: {e}")))?
+            .unwrap_or_default();
+        let provided_bearer = req
+            .headers()
+            .get("authorization")
+            .map_err(|e| {
+                worker::Error::RustError(format!("failed reading authorization header: {e}"))
+            })?
+            .and_then(|raw| {
+                let trimmed = raw.trim();
+                let prefix = "Bearer ";
+                if trimmed.starts_with(prefix) {
+                    Some(trimmed[prefix.len()..].trim().to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        if provided_header.trim() != required && provided_bearer.trim() != required {
+            return Err(worker::Error::RustError(
+                "unauthorized admin request".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     struct WorkerMetricsRunner;
@@ -1195,6 +1493,14 @@ mod wasm_runtime {
         if let Some(message_prefix) = overrides.message_prefix {
             settings.message_prefix = message_prefix;
         }
+        let audit_max_records = parse_canary_audit_max_records(
+            env.var(ENV_CANARY_AUDIT_MAX_RECORDS)
+                .ok()
+                .map(|v| v.to_string())
+                .as_deref(),
+        )
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let payload_for_audit = payload.clone();
         let event = CloudflareCronEvent::from_payload(payload)
             .map_err(|e| worker::Error::RustError(e.to_string()))?;
         let controller = settings
@@ -1205,8 +1511,8 @@ mod wasm_runtime {
             .map_err(|e| worker::Error::RustError(e.to_string()))?;
         let sink = Arc::new(NoopCanaryEventSink);
         let traffic_runner = WorkerDeployApiRunner {
-            account_id: settings.cloudflare_account_id,
-            api_token: settings.cloudflare_api_token,
+            account_id: settings.cloudflare_account_id.clone(),
+            api_token: settings.cloudflare_api_token.clone(),
         };
         let exec = run_cloudflare_cron_event_with_runners(
             event,
@@ -1225,13 +1531,21 @@ mod wasm_runtime {
             .as_ref()
             .map(|u| u.canary_traffic().get());
 
-        Ok(TickSummary {
+        let summary = TickSummary {
             decision: format!("{:?}", exec.outcome.decision),
             applied_canary_percent,
             total_requests: exec.outcome.metrics.total_requests(),
             failed_requests: exec.outcome.metrics.failed_requests(),
             p95_latency_ms: exec.outcome.metrics.p95_latency_ms(),
-        })
+        };
+        let audit_record = build_canary_audit_record(
+            &settings,
+            &payload_for_audit,
+            &summary,
+            worker::Date::now().as_millis(),
+        );
+        append_canary_audit_record(env, audit_record, audit_max_records).await?;
+        Ok(summary)
     }
 
     async fn run_one_tick_with_overrides(
@@ -1450,6 +1764,33 @@ mod wasm_runtime {
         })
     }
 
+    async fn run_canary_audit_recent(req: Request, env: &Env) -> Result<Response> {
+        if let Err(err) = authorize_admin_request(&req, env) {
+            let msg = err.to_string();
+            if msg.contains("unauthorized") {
+                return Response::error(msg, 401);
+            }
+            return Err(err);
+        }
+        let url = req.url()?;
+        let limit = canary_audit_recent_limit_from_url(url.as_str())
+            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let records = fetch_canary_audit_recent(env, limit).await?;
+        Response::from_json(&CanaryAuditRecentResponse { records })
+    }
+
+    async fn run_canary_audit_clear(req: Request, env: &Env) -> Result<Response> {
+        if let Err(err) = authorize_admin_request(&req, env) {
+            let msg = err.to_string();
+            if msg.contains("unauthorized") {
+                return Response::error(msg, 401);
+            }
+            return Err(err);
+        }
+        clear_canary_audit_records(env).await?;
+        Response::ok("ok")
+    }
+
     #[event(fetch)]
     pub async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         if req.method() == Method::Get && req.path().starts_with("/canary/drill/metrics/") {
@@ -1462,6 +1803,18 @@ mod wasm_runtime {
             return match run_canary_drill_tick(req, &env).await {
                 Ok(resp) => Ok(resp),
                 Err(err) => Response::error(format!("drill tick failed: {err}"), 500),
+            };
+        }
+        if req.method() == Method::Get && req.path() == "/canary/audit/recent" {
+            return match run_canary_audit_recent(req, &env).await {
+                Ok(resp) => Ok(resp),
+                Err(err) => Response::error(format!("canary audit recent failed: {err}"), 500),
+            };
+        }
+        if req.method() == Method::Post && req.path() == "/canary/audit/clear" {
+            return match run_canary_audit_clear(req, &env).await {
+                Ok(resp) => Ok(resp),
+                Err(err) => Response::error(format!("canary audit clear failed: {err}"), 500),
             };
         }
 
@@ -1647,6 +2000,84 @@ mod tests {
         assert_eq!(payload[2]["role"], "user");
         assert_eq!(payload[2]["content"], "hello");
         assert_eq!(payload[3]["role"], "user");
+    }
+
+    #[test]
+    fn parse_canary_audit_max_records_defaults_caps_and_rejects_zero() {
+        assert_eq!(
+            parse_canary_audit_max_records(None).unwrap(),
+            DEFAULT_CANARY_AUDIT_MAX_RECORDS
+        );
+        assert_eq!(
+            parse_canary_audit_max_records(Some("999999")).unwrap(),
+            MAX_CANARY_AUDIT_MAX_RECORDS
+        );
+        assert!(parse_canary_audit_max_records(Some("0")).is_err());
+    }
+
+    #[test]
+    fn canary_audit_recent_limit_from_url_parses_limit() {
+        assert_eq!(
+            canary_audit_recent_limit_from_url("https://example.com/canary/audit/recent").unwrap(),
+            DEFAULT_CANARY_AUDIT_RECENT_LIMIT
+        );
+        assert_eq!(
+            canary_audit_recent_limit_from_url("https://example.com/canary/audit/recent?limit=7")
+                .unwrap(),
+            7
+        );
+        assert_eq!(
+            canary_audit_recent_limit_from_url(
+                "https://example.com/canary/audit/recent?foo=bar&limit=9999"
+            )
+            .unwrap(),
+            MAX_CANARY_AUDIT_RECENT_LIMIT
+        );
+        assert!(canary_audit_recent_limit_from_url(
+            "https://example.com/canary/audit/recent?limit=0"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn build_canary_audit_record_captures_tick_summary() {
+        let mut env = HashMap::<String, String>::new();
+        env.insert(ENV_STABLE_VERSION_ID.to_string(), "stable-v1".to_string());
+        env.insert(ENV_CANARY_VERSION_ID.to_string(), "canary-v2".to_string());
+        env.insert(ENV_WORKER_NAME.to_string(), "edge-worker".to_string());
+        env.insert(
+            ENV_METRICS_ENDPOINT.to_string(),
+            "https://metrics.example/canary".to_string(),
+        );
+        env.insert(ENV_CLOUDFLARE_ACCOUNT_ID.to_string(), "acc".to_string());
+        env.insert(ENV_CLOUDFLARE_API_TOKEN.to_string(), "token".to_string());
+        env.insert(ENV_DRY_RUN.to_string(), "true".to_string());
+        let settings = WorkerCanarySettings::from_lookup(|k| env.get(k).cloned()).unwrap();
+
+        let payload = CloudflareCronEventPayload {
+            cron: "manual".to_string(),
+            scheduled_time: 123,
+            r#type: Some("scheduled".to_string()),
+        };
+        let summary = TickSummary {
+            decision: "Promote { to: Percent(25) }".to_string(),
+            applied_canary_percent: Some(25),
+            total_requests: 100,
+            failed_requests: 1,
+            p95_latency_ms: 120,
+        };
+        let record = build_canary_audit_record(&settings, &payload, &summary, 42);
+        assert_eq!(record.cron, "manual");
+        assert_eq!(record.event_type.as_deref(), Some("scheduled"));
+        assert!(record.dry_run);
+        assert_eq!(record.stable_version_id, "stable-v1");
+        assert_eq!(record.canary_version_id, "canary-v2");
+        assert_eq!(record.decision, "Promote { to: Percent(25) }");
+        assert_eq!(record.applied_canary_percent, Some(25));
+        assert_eq!(record.total_requests, 100);
+        assert_eq!(record.failed_requests, 1);
+        assert_eq!(record.p95_latency_ms, 120);
+        assert_eq!(record.recorded_at_ms, 42);
     }
 
     #[test]
