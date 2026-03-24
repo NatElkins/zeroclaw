@@ -16,7 +16,7 @@ bindings = [
 
 [[migrations]]
 tag = "v1"
-new_classes = ["ChatSessionObject"]
+new_sqlite_classes = ["ChatSessionObject"]
 
 [vars]
 # Required runtime settings.

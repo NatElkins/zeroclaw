@@ -9,6 +9,7 @@ model="${ZEROCLAW_OPENROUTER_MODEL:-anthropic/claude-3.5-sonnet}"
 interactive="${ZEROCLAW_EDGE_DEMO_INTERACTIVE:-0}"
 session_id="${ZEROCLAW_EDGE_DEMO_SESSION_ID:-}"
 reset_session="${ZEROCLAW_EDGE_DEMO_RESET_SESSION:-1}"
+base_url_override="${ZEROCLAW_EDGE_DEMO_BASE_URL:-}"
 message="${1:-reply with exactly: edge demo ok}"
 
 require_cmd() {
@@ -108,50 +109,66 @@ chat_reset() {
 }
 
 require_cmd curl
-require_cmd npx
-require_cmd rg
-
-if [[ ! -d "${worker_dir}" ]]; then
-  echo "worker directory not found: ${worker_dir}" >&2
-  exit 1
-fi
-
-bootstrap_openrouter_key
-prepare_rustup_toolchain
-
-env_file="$(mktemp /tmp/zeroclaw-edge-demo.XXXXXX)"
-log_file_base="$(mktemp /tmp/zeroclaw-edge-demo-wrangler.XXXXXX)"
-log_file="${log_file_base}.log"
-mv "${log_file_base}" "${log_file}"
-printf "OPENROUTER_API_KEY=%s\n" "${OPENROUTER_API_KEY}" >"${env_file}"
-printf "ZEROCLAW_OPENROUTER_MODEL=%s\n" "${model}" >>"${env_file}"
 
 worker_pid=""
+env_file=""
+log_file=""
 cleanup() {
   if [[ -n "${worker_pid}" ]] && kill -0 "${worker_pid}" >/dev/null 2>&1; then
     kill "${worker_pid}" >/dev/null 2>&1 || true
     wait "${worker_pid}" >/dev/null 2>&1 || true
   fi
-  : >"${env_file}" || true
-  rm -f "${env_file}" "${log_file}" || true
+  if [[ -n "${env_file}" ]]; then
+    : >"${env_file}" || true
+    rm -f "${env_file}" || true
+  fi
+  if [[ -n "${log_file}" ]]; then
+    rm -f "${log_file}" || true
+  fi
 }
 trap cleanup EXIT
 
-(
-  cd "${worker_dir}"
-  npx wrangler dev --port "${port}" --env-file "${env_file}" >"${log_file}" 2>&1
-) &
-worker_pid="$!"
+if [[ -n "${base_url_override}" ]]; then
+  base_url="${base_url_override%/}"
+  if ! wait_for_worker "${base_url}"; then
+    echo "worker did not become ready: ${base_url}" >&2
+    exit 1
+  fi
+  echo "worker ready at ${base_url}"
+else
+  require_cmd npx
+  require_cmd rg
 
-base_url="http://127.0.0.1:${port}"
-if ! wait_for_worker "${base_url}"; then
-  echo "worker did not become ready: ${base_url}" >&2
-  echo "--- wrangler log ---" >&2
-  sed -n "1,220p" "${log_file}" >&2
-  exit 1
+  if [[ ! -d "${worker_dir}" ]]; then
+    echo "worker directory not found: ${worker_dir}" >&2
+    exit 1
+  fi
+
+  bootstrap_openrouter_key
+  prepare_rustup_toolchain
+
+  env_file="$(mktemp /tmp/zeroclaw-edge-demo.XXXXXX)"
+  log_file_base="$(mktemp /tmp/zeroclaw-edge-demo-wrangler.XXXXXX)"
+  log_file="${log_file_base}.log"
+  mv "${log_file_base}" "${log_file}"
+  printf "OPENROUTER_API_KEY=%s\n" "${OPENROUTER_API_KEY}" >"${env_file}"
+  printf "ZEROCLAW_OPENROUTER_MODEL=%s\n" "${model}" >>"${env_file}"
+
+  (
+    cd "${worker_dir}"
+    npx wrangler dev --port "${port}" --env-file "${env_file}" >"${log_file}" 2>&1
+  ) &
+  worker_pid="$!"
+
+  base_url="http://127.0.0.1:${port}"
+  if ! wait_for_worker "${base_url}"; then
+    echo "worker did not become ready: ${base_url}" >&2
+    echo "--- wrangler log ---" >&2
+    sed -n "1,220p" "${log_file}" >&2
+    exit 1
+  fi
+  echo "worker ready at ${base_url}"
 fi
-
-echo "worker ready at ${base_url}"
 if [[ -z "${session_id}" && "${interactive}" == "1" ]]; then
   session_id="local-demo-$(date +%s)"
 fi
