@@ -95,6 +95,18 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - telemetry pull adapter (`curl` JSON metrics source) for canary inputs
    - one-shot runtime path: metrics -> decision -> `wrangler versions deploy`
    - integration-style tests using local HTTP telemetry + real subprocess boundaries
+16. Scheduled canary trigger wiring
+   - PR: #20
+   - status: complete in stack
+   - fixed-interval trigger + scheduler loop policy
+   - reusable tick-runner boundary with stateful controller progression across intervals
+   - integration-style tests for promote->rollback across scheduled ticks
+17. Cloudflare Cron event binding
+   - PR: #21
+   - status: in progress in stack
+   - typed Cloudflare scheduled event payload validation
+   - cron event -> one canary tick execution bridge
+   - integration-style test for cron payload to traffic-split command path
 
 ## Milestones And Exit Criteria
 
