@@ -32,7 +32,8 @@ This playbook defines how ZeroClaw evaluates canary safety before changing edge 
   - `./scripts/ci/cloudflare_canary_check.sh`
 - WASM portability check included in canary gate.
 
-This PR now includes Cloudflare Cron event binding primitives, but does **not** yet include production deployment glue code for Worker runtime entrypoint wiring.
+This playbook now includes deployed Worker runtime glue (`/tick` and cron wiring), plus
+an authenticated canary drill path for deterministic promote/hold/rollback rehearsal.
 
 ## Rollout Inputs
 
@@ -107,9 +108,67 @@ To override model or local port:
 ZEROCLAW_OPENROUTER_MODEL=openai/gpt-4o-mini ZEROCLAW_EDGE_DEMO_PORT=8787 ./scripts/edge_worker_chat_demo.sh "summarize wasm advantages in 2 bullets"
 ```
 
+To persist memory across separate invocations, provide a stable session id:
+
+```bash
+ZEROCLAW_EDGE_DEMO_SESSION_ID=my-team-room ./scripts/edge_worker_chat_demo.sh "remember token: ZC-1234"
+ZEROCLAW_EDGE_DEMO_SESSION_ID=my-team-room ZEROCLAW_EDGE_DEMO_RESET_SESSION=0 ./scripts/edge_worker_chat_demo.sh "what token did i ask you to remember?"
+```
+
+To point the same CLI at a deployed Worker instead of local `wrangler dev`:
+
+```bash
+ZEROCLAW_EDGE_DEMO_BASE_URL="https://<worker>.<subdomain>.workers.dev" \
+ZEROCLAW_EDGE_DEMO_INTERACTIVE=1 \
+ZEROCLAW_EDGE_DEMO_SESSION_ID=edge-room-1 \
+./scripts/edge_worker_chat_demo.sh
+```
+
+## Deployed Canary Drill (Promote/Hold/Rollback)
+
+The Worker exposes authenticated drill endpoints:
+
+- `GET /canary/drill/metrics/{promote|hold|rollback}`
+- `POST /canary/drill/tick/{promote|hold|rollback}`
+
+These use a deterministic metrics payload per scenario and force dry-run traffic updates
+so drills can exercise the full decision/apply path without mutating production traffic.
+
+### Prerequisites
+
+1. Set drill token secret:
+
+```bash
+printf '%s' '<your-drill-token>' | npx wrangler secret put ZEROCLAW_CANARY_DRILL_TOKEN
+```
+
+2. Ensure deployed Worker URL is known.
+
+### Run Drill
+
+```bash
+ZEROCLAW_EDGE_DEMO_BASE_URL="https://<worker>.<subdomain>.workers.dev" \
+ZEROCLAW_CANARY_DRILL_TOKEN="<your-drill-token>" \
+./scripts/edge_worker_canary_drill.sh all
+```
+
+Expected decision classes:
+
+- `promote` -> `Promote`
+- `hold` -> `Hold`
+- `rollback` -> `Rollback`
+
+### Capture Rollback Evidence
+
+```bash
+curl -fsS -X POST "https://<worker>.<subdomain>.workers.dev/canary/drill/tick/rollback" \
+  -H "x-zeroclaw-drill-token: <your-drill-token>"
+```
+
+Persist the JSON response in incident/audit notes as rollback drill evidence.
+
 ## Intended Next Step
 
-1. Wire Worker runtime cron handler to call `run_cloudflare_cron_event(...)`.
-2. Feed production telemetry endpoint into `CurlCanaryMetricsSource`.
-3. Execute scheduler loop or one-shot cron flow in production with rollout policy defaults.
-4. Persist decision/audit events for postmortems and rollback drills.
+1. Add authenticated edge -> native delegation path for filesystem/shell fallback.
+2. Introduce shared long-term memory HTTP backend for cross-session edge/native state.
+3. Persist canary decision events to durable audit storage for postmortems.
