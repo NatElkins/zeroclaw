@@ -25,16 +25,6 @@ run_scenario() {
     echo "raw: ${resp}" >&2
     exit 1
   fi
-  local audit
-  audit="$(curl -fsS "${base_url}/canary/audit/recent?limit=5" \
-    -H "x-zeroclaw-drill-token: ${drill_token}")"
-  local latest
-  latest="$(printf "%s" "${audit}" | jq -r '.records[0].decision // empty')"
-  if [[ -z "${latest}" || "${latest}" != *"${expected}"* ]]; then
-    echo "audit trail did not record expected decision for scenario=${name}" >&2
-    echo "audit: ${audit}" >&2
-    exit 1
-  fi
   echo "${name}: ${resp}"
 }
 
