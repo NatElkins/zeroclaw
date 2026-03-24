@@ -108,6 +108,12 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - cron event -> one canary tick execution bridge
    - integration-style test for cron payload to traffic-split command path
    - local Worker `/chat` end-to-end smoke via `./scripts/edge_worker_chat_demo.sh`
+18. Worker chat session persistence via Durable Objects
+   - PR: #22
+   - status: in progress in stack
+   - add `session_id` aware `/chat` path backed by Cloudflare Durable Object storage
+   - persist/retrieve bounded chat history without filesystem assumptions
+   - local deterministic demo: multi-turn recall in same session
 
 ## Milestones And Exit Criteria
 
@@ -125,6 +131,7 @@ Exit criteria:
 
 - memory adapter runs in WASM without local filesystem assumptions.
 - shared type compatibility guaranteed against native memory entry types.
+- Worker `/chat` supports explicit session persistence with Durable Objects.
 
 Exit criteria:
 - round-trip tests prove compatibility across native and WASM adapter boundaries.

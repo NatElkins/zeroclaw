@@ -101,10 +101,20 @@ To run interactive call/response mode:
 ZEROCLAW_EDGE_DEMO_INTERACTIVE=1 ./scripts/edge_worker_chat_demo.sh
 ```
 
+The interactive mode now uses a Durable Object `session_id` by default and resets it
+at startup, so follow-up turns in the same run include persistent chat history.
+
 To override model or local port:
 
 ```bash
 ZEROCLAW_OPENROUTER_MODEL=openai/gpt-4o-mini ZEROCLAW_EDGE_DEMO_PORT=8787 ./scripts/edge_worker_chat_demo.sh "summarize wasm advantages in 2 bullets"
+```
+
+To persist memory across separate invocations, provide a stable session id:
+
+```bash
+ZEROCLAW_EDGE_DEMO_SESSION_ID=my-team-room ./scripts/edge_worker_chat_demo.sh "remember token: ZC-1234"
+ZEROCLAW_EDGE_DEMO_SESSION_ID=my-team-room ZEROCLAW_EDGE_DEMO_RESET_SESSION=0 ./scripts/edge_worker_chat_demo.sh "what token did i ask you to remember?"
 ```
 
 ## Intended Next Step
