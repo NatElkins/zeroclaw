@@ -149,6 +149,12 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - expose authenticated audit retrieval endpoint (`GET /canary/audit/recent?limit=N`)
    - local end-to-end verification with `wrangler dev` + drill scenarios confirms promote/hold/rollback
      records are durably queryable in newest-first order
+24. Signed remote drill evidence export
+   - status: complete in stack
+   - add authenticated `POST /canary/drill/export/{all|promote|hold|rollback}` endpoint
+     returning signed incident bundle payloads (HMAC-SHA256) with drill runs + audit records
+   - add `scripts/edge_worker_canary_export_artifact.sh` for operator-side export + tarball packaging
+   - add deterministic unit coverage for export target parsing and signature generation/verification
 
 ## Milestones And Exit Criteria
 
