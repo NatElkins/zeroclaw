@@ -12369,8 +12369,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "hmac",
  "serde",
  "serde_json",
+ "sha2",
  "worker",
  "zeroclaw-edge",
 ]

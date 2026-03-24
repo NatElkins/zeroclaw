@@ -46,6 +46,8 @@ ZEROCLAW_CHAT_HISTORY_MESSAGES = "12"
 # Optional secret:
 # ZEROCLAW_CANARY_METRICS_BEARER_TOKEN
 # ZEROCLAW_CANARY_DRILL_TOKEN (enables authenticated /canary/drill/* endpoints)
+# ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY (enables signed /canary/drill/export/* bundles)
+# ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY_ID (optional key label in exported signatures)
 # ZEROCLAW_LONG_TERM_MEMORY_AUTH_TOKEN
 #
 # Optional vars:
