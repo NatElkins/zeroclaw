@@ -10,6 +10,8 @@
 
 pub mod canary;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod canary_cron;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod canary_live;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod canary_metrics;
