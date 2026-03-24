@@ -128,9 +128,11 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - dry-run apply path verified end-to-end (decision + traffic update command assembly)
    - rollback evidence + operator runbook commands documented
 21. Hybrid native delegation service path
-   - status: pending
-   - add authenticated edge->native delegate call boundary for filesystem/shell tool fallback
-   - keep edge runtime capability-safe while enabling heavy operations through delegation
+   - status: complete in stack
+   - add authenticated edge->native delegate HTTP boundary (`crates/zeroclaw-edge/src/delegate_http.rs`)
+   - add typed policy allowlist + auth token invariants for delegated tool execution
+   - add edge-side HTTP client implementing `DelegateExecutor` for filesystem/shell fallback
+   - add local integration coverage using real `curl` + TCP service round-trip (non-mock)
 22. Shared long-term memory backend integration
    - status: pending
    - keep Durable Object history as short-term session memory

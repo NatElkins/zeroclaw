@@ -169,6 +169,5 @@ Persist the JSON response in incident/audit notes as rollback drill evidence.
 
 ## Intended Next Step
 
-1. Add authenticated edge -> native delegation path for filesystem/shell fallback.
-2. Introduce shared long-term memory HTTP backend for cross-session edge/native state.
-3. Persist canary decision events to durable audit storage for postmortems.
+1. Introduce shared long-term memory HTTP backend for cross-session edge/native state.
+2. Persist canary decision events to durable audit storage for postmortems.
