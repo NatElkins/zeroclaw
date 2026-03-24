@@ -58,8 +58,6 @@ const ENV_PLAN_MIN_REQUESTS: &str = "ZEROCLAW_CANARY_MIN_REQUEST_COUNT";
 const ENV_CLOUDFLARE_ACCOUNT_ID: &str = "CLOUDFLARE_ACCOUNT_ID";
 #[cfg(any(test, target_arch = "wasm32"))]
 const ENV_CLOUDFLARE_API_TOKEN: &str = "CLOUDFLARE_API_TOKEN";
-#[cfg(target_arch = "wasm32")]
-const ENV_CANARY_DRILL_TOKEN: &str = "ZEROCLAW_CANARY_DRILL_TOKEN";
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,197 +237,6 @@ fn parse_stages(raw: &str) -> Result<Vec<(u8, u8)>> {
     Ok(stages)
 }
 
-#[cfg(any(test, target_arch = "wasm32"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CanaryDrillScenario {
-    Promote,
-    Hold,
-    Rollback,
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-impl CanaryDrillScenario {
-    fn parse(raw: &str) -> Result<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "promote" => Ok(Self::Promote),
-            "hold" => Ok(Self::Hold),
-            "rollback" => Ok(Self::Rollback),
-            other => Err(anyhow!(
-                "unsupported canary drill scenario '{other}'; expected promote|hold|rollback"
-            )),
-        }
-    }
-
-    fn as_slug(self) -> &'static str {
-        match self {
-            Self::Promote => "promote",
-            Self::Hold => "hold",
-            Self::Rollback => "rollback",
-        }
-    }
-
-    fn metrics_payload(self) -> serde_json::Value {
-        match self {
-            // Healthy window that should promote.
-            Self::Promote => serde_json::json!({
-                "total_requests": 120,
-                "failed_requests": 0,
-                "p95_latency_ms": 120
-            }),
-            // Insufficient volume should hold at current stage.
-            Self::Hold => serde_json::json!({
-                "total_requests": 5,
-                "failed_requests": 0,
-                "p95_latency_ms": 120
-            }),
-            // High error rate should trigger rollback.
-            Self::Rollback => serde_json::json!({
-                "total_requests": 120,
-                "failed_requests": 25,
-                "p95_latency_ms": 120
-            }),
-        }
-    }
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-const DEFAULT_CHAT_HISTORY_MESSAGES: usize = 12;
-#[cfg(any(test, target_arch = "wasm32"))]
-const MAX_CHAT_HISTORY_MESSAGES: usize = 100;
-#[cfg(any(test, target_arch = "wasm32"))]
-const MAX_CHAT_SESSION_ID_LENGTH: usize = 128;
-#[cfg(any(test, target_arch = "wasm32"))]
-const SYSTEM_PROMPT: &str = "You are ZeroClaw Edge demo. Be concise and action-oriented.";
-
-#[cfg(any(test, target_arch = "wasm32"))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum ChatRole {
-    User,
-    Assistant,
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-impl ChatRole {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::User => "user",
-            Self::Assistant => "assistant",
-        }
-    }
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct ChatMessage {
-    role: ChatRole,
-    content: String,
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-impl ChatMessage {
-    fn new(role: ChatRole, content: impl Into<String>) -> Result<Self> {
-        let content = content.into();
-        let trimmed = content.trim();
-        if trimmed.is_empty() {
-            return Err(anyhow!("chat message content must not be empty"));
-        }
-        Ok(Self {
-            role,
-            content: trimmed.to_string(),
-        })
-    }
-
-    fn to_openrouter_value(&self) -> serde_json::Value {
-        serde_json::json!({
-            "role": self.role.as_str(),
-            "content": self.content,
-        })
-    }
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-fn normalize_session_id(raw: Option<&str>) -> Result<Option<String>> {
-    let Some(raw) = raw else {
-        return Ok(None);
-    };
-    let session_id = raw.trim();
-    if session_id.is_empty() {
-        return Ok(None);
-    }
-    if session_id.len() > MAX_CHAT_SESSION_ID_LENGTH {
-        return Err(anyhow!(
-            "session_id exceeds {} characters",
-            MAX_CHAT_SESSION_ID_LENGTH
-        ));
-    }
-    if !session_id
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | ':' | '.'))
-    {
-        return Err(anyhow!(
-            "session_id may only contain ASCII letters, digits, '-', '_', ':' or '.'"
-        ));
-    }
-    Ok(Some(session_id.to_string()))
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-fn parse_chat_history_limit(raw: Option<&str>) -> Result<usize> {
-    let parsed = raw
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::parse::<usize>)
-        .transpose()
-        .context("invalid ZEROCLAW_CHAT_HISTORY_MESSAGES")?
-        .unwrap_or(DEFAULT_CHAT_HISTORY_MESSAGES);
-
-    if parsed == 0 {
-        return Err(anyhow!(
-            "ZEROCLAW_CHAT_HISTORY_MESSAGES must be greater than zero"
-        ));
-    }
-
-    Ok(parsed.min(MAX_CHAT_HISTORY_MESSAGES))
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-fn trim_chat_history(mut history: Vec<ChatMessage>, max_messages: usize) -> Vec<ChatMessage> {
-    if max_messages == 0 {
-        return Vec::new();
-    }
-    if history.len() > max_messages {
-        history = history.split_off(history.len() - max_messages);
-    }
-    history
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-fn append_and_trim_chat_history(
-    mut existing: Vec<ChatMessage>,
-    incoming: Vec<ChatMessage>,
-    max_messages: usize,
-) -> Vec<ChatMessage> {
-    existing.extend(incoming);
-    trim_chat_history(existing, max_messages)
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-fn build_openrouter_messages(
-    history: &[ChatMessage],
-    user_message: &str,
-) -> Result<Vec<serde_json::Value>> {
-    let user_message = ChatMessage::new(ChatRole::User, user_message)?;
-    let mut messages = Vec::with_capacity(history.len() + 2);
-    messages.push(serde_json::json!({
-        "role": "system",
-        "content": SYSTEM_PROMPT,
-    }));
-    messages.extend(history.iter().map(ChatMessage::to_openrouter_value));
-    messages.push(user_message.to_openrouter_value());
-    Ok(messages)
-}
-
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone, Serialize)]
 struct TickSummary {
@@ -441,33 +248,19 @@ struct TickSummary {
 }
 
 #[cfg(target_arch = "wasm32")]
-#[derive(Debug, Clone, Serialize)]
-struct DrillTickSummary {
-    scenario: String,
-    dry_run: bool,
-    tick: TickSummary,
-}
-
-#[cfg(target_arch = "wasm32")]
 mod wasm_runtime {
     use super::*;
 
     use async_trait::async_trait;
     use worker::{
-        console_error, console_log, durable_object, event, wasm_bindgen, Context, DurableObject,
-        Env, Fetch, Headers, Method, Request, RequestInit, Response, Result, ScheduleContext,
-        ScheduledEvent, State, Stub,
+        console_error, console_log, event, Context, Env, Fetch, Headers, Method, Request,
+        RequestInit, Response, Result, ScheduleContext, ScheduledEvent,
     };
 
     const ENV_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
     const ENV_OPENROUTER_MODEL: &str = "ZEROCLAW_OPENROUTER_MODEL";
     const ENV_OPENROUTER_REFERER: &str = "OPENROUTER_HTTP_REFERER";
     const ENV_OPENROUTER_TITLE: &str = "OPENROUTER_X_TITLE";
-    const ENV_CHAT_HISTORY_MESSAGES: &str = "ZEROCLAW_CHAT_HISTORY_MESSAGES";
-    const CHAT_SESSIONS_BINDING: &str = "ZEROCLAW_CHAT_SESSIONS";
-    const CHAT_HISTORY_STORAGE_KEY: &str = "messages";
-    const CHAT_DO_INTERNAL_ORIGIN: &str = "https://zeroclaw-chat-session.internal";
-    const DRILL_TOKEN_HEADER: &str = "x-zeroclaw-drill-token";
 
     #[derive(Debug, Deserialize)]
     struct ChatRequest {
@@ -494,248 +287,6 @@ mod wasm_runtime {
     #[derive(Debug, Deserialize)]
     struct OpenRouterMessage {
         content: String,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    struct SessionHistoryResponse {
-        messages: Vec<ChatMessage>,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct ChatResetRequest {
-        session_id: String,
-    }
-
-    #[derive(Debug, Clone, Default)]
-    struct TickOverrides {
-        metrics_endpoint: Option<String>,
-        metrics_bearer_token: Option<String>,
-        dry_run: Option<bool>,
-        message_prefix: Option<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    struct AppendSessionHistoryRequest {
-        messages: Vec<ChatMessage>,
-        max_messages: usize,
-    }
-
-    #[durable_object]
-    pub struct ChatSessionObject {
-        state: State,
-    }
-
-    impl DurableObject for ChatSessionObject {
-        fn new(state: State, _env: Env) -> Self {
-            Self { state }
-        }
-
-        async fn fetch(&self, mut req: Request) -> Result<Response> {
-            match (req.method(), req.path().as_str()) {
-                (Method::Get, "/history") => {
-                    let messages = self
-                        .state
-                        .storage()
-                        .get::<Vec<ChatMessage>>(CHAT_HISTORY_STORAGE_KEY)
-                        .await?
-                        .unwrap_or_default();
-                    Response::from_json(&SessionHistoryResponse { messages })
-                }
-                (Method::Post, "/append") => {
-                    let append_req: AppendSessionHistoryRequest =
-                        req.json().await.map_err(|e| {
-                            worker::Error::RustError(format!("invalid append payload: {e}"))
-                        })?;
-                    if append_req.max_messages == 0 {
-                        return Response::error("max_messages must be greater than zero", 400);
-                    }
-                    let existing = self
-                        .state
-                        .storage()
-                        .get::<Vec<ChatMessage>>(CHAT_HISTORY_STORAGE_KEY)
-                        .await?
-                        .unwrap_or_default();
-                    let messages = append_and_trim_chat_history(
-                        existing,
-                        append_req.messages,
-                        append_req.max_messages,
-                    );
-                    self.state
-                        .storage()
-                        .put(CHAT_HISTORY_STORAGE_KEY, &messages)
-                        .await?;
-                    Response::from_json(&SessionHistoryResponse { messages })
-                }
-                (Method::Post, "/clear") => {
-                    self.state
-                        .storage()
-                        .delete(CHAT_HISTORY_STORAGE_KEY)
-                        .await?;
-                    Response::ok("ok")
-                }
-                _ => Response::error("Not Found", 404),
-            }
-        }
-    }
-
-    fn chat_do_url(path: &str) -> String {
-        format!("{CHAT_DO_INTERNAL_ORIGIN}{path}")
-    }
-
-    async fn parse_required_json_response<T: DeserializeOwned>(
-        mut resp: Response,
-        op_name: &str,
-    ) -> Result<T> {
-        let status = resp.status_code();
-        if !(200..=299).contains(&status) {
-            let body = resp.text().await.unwrap_or_else(|_| String::new());
-            return Err(worker::Error::RustError(format!(
-                "{op_name} failed with status {status}: {body}"
-            )));
-        }
-        resp.json::<T>()
-            .await
-            .map_err(|e| worker::Error::RustError(format!("{op_name} returned invalid JSON: {e}")))
-    }
-
-    async fn chat_session_stub(env: &Env, session_id: &str) -> Result<Stub> {
-        let namespace = env.durable_object(CHAT_SESSIONS_BINDING).map_err(|e| {
-            worker::Error::RustError(format!(
-                "missing durable object binding {CHAT_SESSIONS_BINDING}: {e}"
-            ))
-        })?;
-        let object_id = namespace.id_from_name(session_id).map_err(|e| {
-            worker::Error::RustError(format!(
-                "failed creating durable object id for session {session_id}: {e}"
-            ))
-        })?;
-        object_id.get_stub().map_err(|e| {
-            worker::Error::RustError(format!(
-                "failed getting durable object stub for session {session_id}: {e}"
-            ))
-        })
-    }
-
-    async fn fetch_session_history(env: &Env, session_id: &str) -> Result<Vec<ChatMessage>> {
-        let stub = chat_session_stub(env, session_id).await?;
-        let resp = stub
-            .fetch_with_str(&chat_do_url("/history"))
-            .await
-            .map_err(|e| worker::Error::RustError(format!("history fetch failed: {e}")))?;
-        let payload: SessionHistoryResponse =
-            parse_required_json_response(resp, "session history fetch").await?;
-        Ok(payload.messages)
-    }
-
-    async fn append_session_history(
-        env: &Env,
-        session_id: &str,
-        messages: Vec<ChatMessage>,
-        max_messages: usize,
-    ) -> Result<Vec<ChatMessage>> {
-        let stub = chat_session_stub(env, session_id).await?;
-        let body = serde_json::to_string(&AppendSessionHistoryRequest {
-            messages,
-            max_messages,
-        })
-        .map_err(|e| worker::Error::RustError(format!("failed serializing append body: {e}")))?;
-        let mut init = RequestInit::new();
-        init.with_method(Method::Post);
-        let headers = Headers::new();
-        headers
-            .set("Content-Type", "application/json")
-            .map_err(|e| worker::Error::RustError(format!("failed setting content-type: {e}")))?;
-        init.with_headers(headers);
-        init.with_body(Some(body.into()));
-        let req = Request::new_with_init(&chat_do_url("/append"), &init).map_err(|e| {
-            worker::Error::RustError(format!("failed creating append request: {e}"))
-        })?;
-        let resp = stub
-            .fetch_with_request(req)
-            .await
-            .map_err(|e| worker::Error::RustError(format!("session append failed: {e}")))?;
-        let payload: SessionHistoryResponse =
-            parse_required_json_response(resp, "session append").await?;
-        Ok(payload.messages)
-    }
-
-    async fn clear_session_history(env: &Env, session_id: &str) -> Result<()> {
-        let stub = chat_session_stub(env, session_id).await?;
-        let mut init = RequestInit::new();
-        init.with_method(Method::Post);
-        let req = Request::new_with_init(&chat_do_url("/clear"), &init)
-            .map_err(|e| worker::Error::RustError(format!("failed creating clear request: {e}")))?;
-        let resp = stub
-            .fetch_with_request(req)
-            .await
-            .map_err(|e| worker::Error::RustError(format!("session clear failed: {e}")))?;
-        let mut resp = resp;
-        let status = resp.status_code();
-        if !(200..=299).contains(&status) {
-            let body = resp.text().await.unwrap_or_else(|_| String::new());
-            return Err(worker::Error::RustError(format!(
-                "session clear failed with status {status}: {body}"
-            )));
-        }
-        Ok(())
-    }
-
-    fn parse_drill_path(path: &str, prefix: &str) -> Result<Option<CanaryDrillScenario>> {
-        let Some(raw) = path.strip_prefix(prefix) else {
-            return Ok(None);
-        };
-        if raw.is_empty() || raw.contains('/') {
-            return Err(worker::Error::RustError(
-                "drill scenario path must be one segment".to_string(),
-            ));
-        }
-        Ok(Some(
-            CanaryDrillScenario::parse(raw).map_err(|e| worker::Error::RustError(e.to_string()))?,
-        ))
-    }
-
-    fn drill_token_required(env: &Env) -> Option<String> {
-        env.var(ENV_CANARY_DRILL_TOKEN)
-            .ok()
-            .map(|v| v.to_string())
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-    }
-
-    fn authorized_drill_token(req: &Request, env: &Env) -> Result<String> {
-        let required = drill_token_required(env).ok_or_else(|| {
-            worker::Error::RustError(format!(
-                "drill endpoints disabled; missing {}",
-                ENV_CANARY_DRILL_TOKEN
-            ))
-        })?;
-        let provided_header = req
-            .headers()
-            .get(DRILL_TOKEN_HEADER)
-            .map_err(|e| worker::Error::RustError(format!("failed reading drill header: {e}")))?
-            .unwrap_or_default();
-        let provided_bearer = req
-            .headers()
-            .get("authorization")
-            .map_err(|e| {
-                worker::Error::RustError(format!("failed reading authorization header: {e}"))
-            })?
-            .and_then(|raw| {
-                let trimmed = raw.trim();
-                let prefix = "Bearer ";
-                if trimmed.starts_with(prefix) {
-                    Some(trimmed[prefix.len()..].trim().to_string())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-        if provided_header.trim() != required && provided_bearer.trim() != required {
-            return Err(worker::Error::RustError(
-                "unauthorized drill request".to_string(),
-            ));
-        }
-        Ok(required)
     }
 
     struct WorkerMetricsRunner;
@@ -814,29 +365,6 @@ mod wasm_runtime {
         }
     }
 
-    struct WorkerDrillMetricsRunner {
-        payload: String,
-    }
-
-    #[async_trait(?Send)]
-    impl CommandRunner for WorkerDrillMetricsRunner {
-        async fn run(
-            &self,
-            program: &str,
-            _args: &[String],
-            _cwd: Option<&std::path::PathBuf>,
-        ) -> anyhow::Result<CommandOutput> {
-            if program != "curl" {
-                return Err(anyhow!("unsupported metrics program '{}'", program));
-            }
-            Ok(CommandOutput {
-                status_code: 0,
-                stdout: self.payload.clone(),
-                stderr: String::new(),
-            })
-        }
-    }
-
     struct WorkerDeployApiRunner {
         account_id: String,
         api_token: String,
@@ -852,27 +380,6 @@ mod wasm_runtime {
         ) -> anyhow::Result<CommandOutput> {
             let deploy = parse_wrangler_versions_deploy(program, args)
                 .map_err(|e| anyhow!("failed parsing wrangler deploy command: {e}"))?;
-            if deploy.dry_run {
-                return Ok(CommandOutput {
-                    status_code: 0,
-                    stdout: serde_json::json!({
-                        "dry_run": true,
-                        "worker_name": deploy.worker_name,
-                        "versions": deploy
-                            .versions
-                            .iter()
-                            .map(|v| {
-                                serde_json::json!({
-                                    "version_id": v.version_id,
-                                    "percentage": v.percentage
-                                })
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .to_string(),
-                    stderr: String::new(),
-                });
-            }
             let endpoint = format!(
                 "https://api.cloudflare.com/client/v4/accounts/{}/workers/scripts/{}/deployments",
                 self.account_id, deploy.worker_name
@@ -919,30 +426,10 @@ mod wasm_runtime {
         }
     }
 
-    async fn run_one_tick_with_runners<MR>(
-        payload: CloudflareCronEventPayload,
-        env: &Env,
-        overrides: TickOverrides,
-        metrics_runner: MR,
-    ) -> Result<TickSummary>
-    where
-        MR: CommandRunner,
-    {
-        let mut settings =
+    async fn run_one_tick(payload: CloudflareCronEventPayload, env: &Env) -> Result<TickSummary> {
+        let settings =
             WorkerCanarySettings::from_lookup(|key| env.var(key).ok().map(|v| v.to_string()))
                 .map_err(|e| worker::Error::RustError(e.to_string()))?;
-        if let Some(endpoint) = overrides.metrics_endpoint {
-            settings.metrics_endpoint = endpoint;
-        }
-        if let Some(token) = overrides.metrics_bearer_token {
-            settings.metrics_bearer_token = Some(token);
-        }
-        if let Some(dry_run) = overrides.dry_run {
-            settings.dry_run = dry_run;
-        }
-        if let Some(message_prefix) = overrides.message_prefix {
-            settings.message_prefix = message_prefix;
-        }
         let event = CloudflareCronEvent::from_payload(payload)
             .map_err(|e| worker::Error::RustError(e.to_string()))?;
         let controller = settings
@@ -952,6 +439,7 @@ mod wasm_runtime {
             .runtime_config()
             .map_err(|e| worker::Error::RustError(e.to_string()))?;
         let sink = Arc::new(NoopCanaryEventSink);
+        let metrics_runner = WorkerMetricsRunner;
         let traffic_runner = WorkerDeployApiRunner {
             account_id: settings.cloudflare_account_id,
             api_token: settings.cloudflare_api_token,
@@ -965,7 +453,7 @@ mod wasm_runtime {
             traffic_runner,
         )
         .await
-        .map_err(|e| worker::Error::RustError(format!("{e:#}")))?;
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
 
         let applied_canary_percent = exec
             .outcome
@@ -980,18 +468,6 @@ mod wasm_runtime {
             failed_requests: exec.outcome.metrics.failed_requests(),
             p95_latency_ms: exec.outcome.metrics.p95_latency_ms(),
         })
-    }
-
-    async fn run_one_tick_with_overrides(
-        payload: CloudflareCronEventPayload,
-        env: &Env,
-        overrides: TickOverrides,
-    ) -> Result<TickSummary> {
-        run_one_tick_with_runners(payload, env, overrides, WorkerMetricsRunner).await
-    }
-
-    async fn run_one_tick(payload: CloudflareCronEventPayload, env: &Env) -> Result<TickSummary> {
-        run_one_tick_with_overrides(payload, env, TickOverrides::default()).await
     }
 
     async fn run_chat(mut req: Request, env: &Env) -> Result<Response> {
@@ -1071,80 +547,8 @@ mod wasm_runtime {
         Response::from_json(&ChatResponse { model, reply })
     }
 
-    async fn run_canary_drill_metrics(req: Request, env: &Env) -> Result<Response> {
-        if let Err(err) = authorized_drill_token(&req, env) {
-            let msg = err.to_string();
-            if msg.contains("disabled") {
-                return Response::error(msg, 404);
-            }
-            if msg.contains("unauthorized") {
-                return Response::error(msg, 401);
-            }
-            return Err(err);
-        }
-        let scenario = parse_drill_path(req.path().as_str(), "/canary/drill/metrics/")?
-            .ok_or_else(|| worker::Error::RustError("missing drill scenario".to_string()))?;
-        Response::from_json(&scenario.metrics_payload())
-    }
-
-    async fn run_canary_drill_tick(req: Request, env: &Env) -> Result<Response> {
-        let drill_token = match authorized_drill_token(&req, env) {
-            Ok(token) => token,
-            Err(err) => {
-                let msg = err.to_string();
-                if msg.contains("disabled") {
-                    return Response::error(msg, 404);
-                }
-                if msg.contains("unauthorized") {
-                    return Response::error(msg, 401);
-                }
-                return Err(err);
-            }
-        };
-        let scenario = parse_drill_path(req.path().as_str(), "/canary/drill/tick/")?
-            .ok_or_else(|| worker::Error::RustError("missing drill scenario".to_string()))?;
-        let drill_payload = scenario.metrics_payload().to_string();
-        let payload = CloudflareCronEventPayload {
-            cron: format!("drill:{}", scenario.as_slug()),
-            scheduled_time: worker::Date::now().as_millis(),
-            r#type: Some("scheduled".to_string()),
-        };
-        let summary = run_one_tick_with_runners(
-            payload,
-            env,
-            TickOverrides {
-                metrics_endpoint: Some("https://drill.internal/metrics".to_string()),
-                metrics_bearer_token: Some(drill_token),
-                dry_run: Some(true),
-                message_prefix: Some(format!("zeroclaw canary drill {}", scenario.as_slug())),
-            },
-            WorkerDrillMetricsRunner {
-                payload: drill_payload,
-            },
-        )
-        .await?;
-        Response::from_json(&DrillTickSummary {
-            scenario: scenario.as_slug().to_string(),
-            dry_run: true,
-            tick: summary,
-        })
-    }
-
     #[event(fetch)]
     pub async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-        if req.method() == Method::Get && req.path().starts_with("/canary/drill/metrics/") {
-            return match run_canary_drill_metrics(req, &env).await {
-                Ok(resp) => Ok(resp),
-                Err(err) => Response::error(format!("drill metrics failed: {err}"), 500),
-            };
-        }
-        if req.method() == Method::Post && req.path().starts_with("/canary/drill/tick/") {
-            return match run_canary_drill_tick(req, &env).await {
-                Ok(resp) => Ok(resp),
-                Err(err) => Response::error(format!("drill tick failed: {err}"), 500),
-            };
-        }
-
         match (req.method(), req.path().as_str()) {
             (Method::Get, "/healthz") => Response::ok("ok"),
             (Method::Post, "/chat") => run_chat(req, &env).await,
@@ -1217,96 +621,5 @@ mod tests {
         assert_eq!(settings.stages, vec![(10, 1), (25, 1), (100, 1)]);
         assert_eq!(settings.max_error_rate_bps, 100);
         assert!(!settings.dry_run);
-    }
-
-    #[test]
-    fn normalize_session_id_enforces_shape() {
-        assert_eq!(
-            normalize_session_id(Some(" room-1 ")).unwrap(),
-            Some("room-1".to_string())
-        );
-        assert_eq!(normalize_session_id(Some("")).unwrap(), None);
-        assert!(normalize_session_id(Some("bad/id")).is_err());
-    }
-
-    #[test]
-    fn parse_chat_history_limit_caps_and_rejects_zero() {
-        assert_eq!(
-            parse_chat_history_limit(None).unwrap(),
-            DEFAULT_CHAT_HISTORY_MESSAGES
-        );
-        assert_eq!(parse_chat_history_limit(Some("7")).unwrap(), 7);
-        assert_eq!(
-            parse_chat_history_limit(Some("999")).unwrap(),
-            MAX_CHAT_HISTORY_MESSAGES
-        );
-        assert!(parse_chat_history_limit(Some("0")).is_err());
-    }
-
-    #[test]
-    fn append_and_trim_history_keeps_most_recent_messages() {
-        let existing = vec![
-            ChatMessage::new(ChatRole::User, "u1").unwrap(),
-            ChatMessage::new(ChatRole::Assistant, "a1").unwrap(),
-            ChatMessage::new(ChatRole::User, "u2").unwrap(),
-        ];
-        let incoming = vec![
-            ChatMessage::new(ChatRole::Assistant, "a2").unwrap(),
-            ChatMessage::new(ChatRole::User, "u3").unwrap(),
-        ];
-        let merged = append_and_trim_chat_history(existing, incoming, 4);
-        let got: Vec<String> = merged.into_iter().map(|m| m.content).collect();
-        assert_eq!(got, vec!["a1", "u2", "a2", "u3"]);
-    }
-
-    #[test]
-    fn build_openrouter_messages_includes_system_history_and_user() {
-        let history = vec![
-            ChatMessage::new(ChatRole::User, "hello").unwrap(),
-            ChatMessage::new(ChatRole::Assistant, "hi").unwrap(),
-        ];
-        let payload = build_openrouter_messages(&history, "what did I ask?").unwrap();
-        assert_eq!(payload.len(), 4);
-        assert_eq!(payload[0]["role"], "system");
-        assert_eq!(payload[1]["role"], "user");
-        assert_eq!(payload[1]["content"], "hello");
-        assert_eq!(payload[2]["role"], "assistant");
-        assert_eq!(payload[3]["content"], "what did I ask?");
-    }
-
-    #[test]
-    fn canary_drill_scenario_parses_known_values() {
-        assert_eq!(
-            CanaryDrillScenario::parse("promote").unwrap(),
-            CanaryDrillScenario::Promote
-        );
-        assert_eq!(CanaryDrillScenario::Promote.as_slug(), "promote");
-        assert_eq!(
-            CanaryDrillScenario::parse(" hold ").unwrap(),
-            CanaryDrillScenario::Hold
-        );
-        assert_eq!(
-            CanaryDrillScenario::parse("ROLLBACK").unwrap(),
-            CanaryDrillScenario::Rollback
-        );
-        assert!(CanaryDrillScenario::parse("unknown").is_err());
-    }
-
-    #[test]
-    fn canary_drill_metrics_payload_matches_expected_threshold_cases() {
-        let promote = CanaryDrillScenario::Promote.metrics_payload();
-        assert_eq!(promote["total_requests"], 120);
-        assert_eq!(promote["failed_requests"], 0);
-        assert_eq!(promote["p95_latency_ms"], 120);
-
-        let hold = CanaryDrillScenario::Hold.metrics_payload();
-        assert_eq!(hold["total_requests"], 5);
-        assert_eq!(hold["failed_requests"], 0);
-        assert_eq!(hold["p95_latency_ms"], 120);
-
-        let rollback = CanaryDrillScenario::Rollback.metrics_payload();
-        assert_eq!(rollback["total_requests"], 120);
-        assert_eq!(rollback["failed_requests"], 25);
-        assert_eq!(rollback["p95_latency_ms"], 120);
     }
 }

@@ -29,4 +29,4 @@ ZEROCLAW_CANARY_MIN_REQUEST_COUNT = "10"
 # CLOUDFLARE_API_TOKEN (set via `wrangler secret put CLOUDFLARE_API_TOKEN`)
 # Optional secret:
 # ZEROCLAW_CANARY_METRICS_BEARER_TOKEN
-# ZEROCLAW_CANARY_DRILL_TOKEN (enables authenticated /canary/drill/* endpoints)
+
