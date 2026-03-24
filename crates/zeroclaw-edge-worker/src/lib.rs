@@ -67,6 +67,12 @@ const ENV_CANARY_DRILL_TOKEN: &str = "ZEROCLAW_CANARY_DRILL_TOKEN";
 #[cfg(target_arch = "wasm32")]
 const ENV_CANARY_AUDIT_MAX_RECORDS: &str = "ZEROCLAW_CANARY_AUDIT_MAX_RECORDS";
 #[cfg(target_arch = "wasm32")]
+const ENV_CANARY_AUDIT_RETENTION_MS: &str = "ZEROCLAW_CANARY_AUDIT_RETENTION_MS";
+#[cfg(any(test, target_arch = "wasm32"))]
+const ENV_CANARY_ARCHIVE_SINK_URL: &str = "ZEROCLAW_CANARY_ARCHIVE_SINK_URL";
+#[cfg(any(test, target_arch = "wasm32"))]
+const ENV_CANARY_ARCHIVE_SINK_AUTH_TOKEN: &str = "ZEROCLAW_CANARY_ARCHIVE_SINK_AUTH_TOKEN";
+#[cfg(target_arch = "wasm32")]
 const ENV_CANARY_ARTIFACT_SIGNING_KEY: &str = "ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY";
 #[cfg(target_arch = "wasm32")]
 const ENV_CANARY_ARTIFACT_SIGNING_KEY_ID: &str = "ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY_ID";
@@ -302,6 +308,42 @@ struct CanaryAuditAppendRequest {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CanaryAuditRemoteSinkSettings {
+    url: String,
+    auth_token: Option<String>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryAuditRemoteArchivePayload {
+    generated_at_ms: u64,
+    worker_name: String,
+    source: String,
+    limit: usize,
+    before_ms: Option<u64>,
+    records: Vec<CanaryAuditRecord>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryAuditRemoteArchiveBundle {
+    payload: CanaryAuditRemoteArchivePayload,
+    signature: CanaryDrillArtifactSignature,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryAuditRemoteArchiveUploadResponse {
+    sink_url: String,
+    sink_status: u16,
+    uploaded_records: usize,
+    deleted_records: usize,
+    remaining_records: usize,
+    payload_sha256_hex: String,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CanaryDrillArtifactPayload {
     generated_at_ms: u64,
@@ -372,6 +414,84 @@ fn canary_audit_recent_limit_from_url(url: &str) -> Result<usize> {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+fn apply_canary_audit_retention(
+    mut records: Vec<CanaryAuditRecord>,
+    max_records: usize,
+    retention_ms: u64,
+    reference_ms: u64,
+) -> Vec<CanaryAuditRecord> {
+    let min_recorded_at = reference_ms.saturating_sub(retention_ms);
+    records.retain(|record| record.recorded_at_ms >= min_recorded_at);
+    if records.len() > max_records {
+        records = records.split_off(records.len() - max_records);
+    }
+    records
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn canary_audit_archive_selection_indices(
+    records: &[CanaryAuditRecord],
+    limit: usize,
+    before_ms: Option<u64>,
+) -> Vec<usize> {
+    let cutoff = before_ms.unwrap_or(u64::MAX);
+    records
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, record)| (record.recorded_at_ms <= cutoff).then_some(idx))
+        .take(limit)
+        .collect()
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn remove_canary_audit_records_by_indices(
+    records: Vec<CanaryAuditRecord>,
+    indices: &[usize],
+) -> Vec<CanaryAuditRecord> {
+    if indices.is_empty() {
+        return records;
+    }
+    let mut removed_cursor = 0usize;
+    let mut kept = Vec::with_capacity(records.len().saturating_sub(indices.len()));
+    for (idx, record) in records.into_iter().enumerate() {
+        if removed_cursor < indices.len() && indices[removed_cursor] == idx {
+            removed_cursor += 1;
+            continue;
+        }
+        kept.push(record);
+    }
+    kept
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn parse_canary_audit_remote_sink_settings<F>(
+    mut get: F,
+) -> Result<Option<CanaryAuditRemoteSinkSettings>>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let sink_url = get(ENV_CANARY_ARCHIVE_SINK_URL)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(sink_url) = sink_url else {
+        return Ok(None);
+    };
+    if !(sink_url.starts_with("http://") || sink_url.starts_with("https://")) {
+        return Err(anyhow!(
+            "{} must start with http:// or https://",
+            ENV_CANARY_ARCHIVE_SINK_URL
+        ));
+    }
+    let auth_token = get(ENV_CANARY_ARCHIVE_SINK_AUTH_TOKEN)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Ok(Some(CanaryAuditRemoteSinkSettings {
+        url: sink_url,
+        auth_token,
+    }))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 fn parse_canary_drill_export_target(raw: &str) -> Result<CanaryDrillExportTarget> {
     let normalized = raw.trim().to_ascii_lowercase();
     if normalized.is_empty() {
@@ -417,32 +537,48 @@ fn hex_encode_lower(bytes: &[u8]) -> String {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-fn sign_canary_drill_artifact_payload(
-    payload: CanaryDrillArtifactPayload,
+fn build_hmac_sha256_signature<T: Serialize>(
+    payload: &T,
     signing_key: &str,
     key_id: Option<&str>,
-) -> Result<CanaryDrillArtifactBundle> {
+) -> Result<CanaryDrillArtifactSignature> {
     let trimmed = signing_key.trim();
     if trimmed.is_empty() {
         return Err(anyhow!("artifact signing key must not be empty"));
     }
-    let payload_bytes =
-        serde_json::to_vec(&payload).context("failed serializing canary drill artifact payload")?;
+    let payload_bytes = serde_json::to_vec(payload).context("failed serializing signed payload")?;
     let payload_digest = Sha256::digest(&payload_bytes);
     let payload_sha256_hex = hex_encode_lower(payload_digest.as_ref());
     let mut mac = Hmac::<Sha256>::new_from_slice(trimmed.as_bytes())
         .map_err(|e| anyhow!("invalid artifact signing key: {e}"))?;
     mac.update(&payload_bytes);
     let signature_hmac_sha256_hex = hex_encode_lower(&mac.finalize().into_bytes());
-    Ok(CanaryDrillArtifactBundle {
-        payload,
-        signature: CanaryDrillArtifactSignature {
-            algorithm: "hmac-sha256".to_string(),
-            key_id: key_id.map(|id| id.to_string()),
-            payload_sha256_hex,
-            signature_hmac_sha256_hex,
-        },
+    Ok(CanaryDrillArtifactSignature {
+        algorithm: "hmac-sha256".to_string(),
+        key_id: key_id.map(|id| id.to_string()),
+        payload_sha256_hex,
+        signature_hmac_sha256_hex,
     })
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn sign_canary_drill_artifact_payload(
+    payload: CanaryDrillArtifactPayload,
+    signing_key: &str,
+    key_id: Option<&str>,
+) -> Result<CanaryDrillArtifactBundle> {
+    let signature = build_hmac_sha256_signature(&payload, signing_key, key_id)?;
+    Ok(CanaryDrillArtifactBundle { payload, signature })
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn sign_canary_audit_remote_archive_payload(
+    payload: CanaryAuditRemoteArchivePayload,
+    signing_key: &str,
+    key_id: Option<&str>,
+) -> Result<CanaryAuditRemoteArchiveBundle> {
+    let signature = build_hmac_sha256_signature(&payload, signing_key, key_id)?;
+    Ok(CanaryAuditRemoteArchiveBundle { payload, signature })
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -1188,6 +1324,49 @@ mod wasm_runtime {
         Ok(())
     }
 
+    async fn upload_canary_audit_remote_archive_bundle(
+        settings: &CanaryAuditRemoteSinkSettings,
+        bundle: &CanaryAuditRemoteArchiveBundle,
+    ) -> Result<u16> {
+        let body = serde_json::to_string(bundle).map_err(|e| {
+            worker::Error::RustError(format!(
+                "failed serializing canary remote archive bundle: {e}"
+            ))
+        })?;
+        let mut init = RequestInit::new();
+        init.with_method(Method::Post);
+        let headers = Headers::new();
+        headers
+            .set("Content-Type", "application/json")
+            .map_err(|e| worker::Error::RustError(format!("failed setting content-type: {e}")))?;
+        if let Some(token) = settings.auth_token.as_deref() {
+            headers
+                .set("Authorization", &format!("Bearer {token}"))
+                .map_err(|e| {
+                    worker::Error::RustError(format!(
+                        "failed setting archive sink auth header: {e}"
+                    ))
+                })?;
+        }
+        init.with_headers(headers);
+        init.with_body(Some(body.into()));
+        let req = Request::new_with_init(settings.url.as_str(), &init).map_err(|e| {
+            worker::Error::RustError(format!("failed creating archive sink request: {e}"))
+        })?;
+        let mut resp = Fetch::Request(req)
+            .send()
+            .await
+            .map_err(|e| worker::Error::RustError(format!("archive sink request failed: {e}")))?;
+        let status = resp.status_code();
+        if !(200..=299).contains(&status) {
+            let body = resp.text().await.unwrap_or_else(|_| String::new());
+            return Err(worker::Error::RustError(format!(
+                "archive sink returned status {status}: {body}"
+            )));
+        }
+        Ok(status)
+    }
+
     async fn send_memory_request(
         settings: &LongTermMemorySettings,
         method: Method,
@@ -1372,6 +1551,13 @@ mod wasm_runtime {
             .map(|v| v.to_string())
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
+    }
+
+    fn canary_audit_remote_sink_settings(
+        env: &Env,
+    ) -> Result<Option<CanaryAuditRemoteSinkSettings>> {
+        parse_canary_audit_remote_sink_settings(|key| env.var(key).ok().map(|v| v.to_string()))
+            .map_err(|e| worker::Error::RustError(e.to_string()))
     }
 
     fn authorized_drill_token(req: &Request, env: &Env) -> Result<String> {
@@ -2005,6 +2191,103 @@ mod wasm_runtime {
         Response::ok("ok")
     }
 
+    async fn run_canary_audit_archive(mut req: Request, env: &Env) -> Result<Response> {
+        if let Err(err) = authorize_admin_request(&req, env) {
+            let msg = err.to_string();
+            if msg.contains("unauthorized") {
+                return Response::error(msg, 401);
+            }
+            return Err(err);
+        }
+        let mut archive_req: CanaryAuditArchiveRequest = req
+            .json()
+            .await
+            .map_err(|e| worker::Error::RustError(format!("invalid archive payload: {e}")))?;
+        let requested_limit = archive_req.limit.to_string();
+        archive_req.limit = parse_canary_audit_recent_limit(Some(requested_limit.as_str()))
+            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let response = archive_canary_audit_records(env, archive_req).await?;
+        Response::from_json(&response)
+    }
+
+    async fn run_canary_audit_archive_upload(mut req: Request, env: &Env) -> Result<Response> {
+        if let Err(err) = authorize_admin_request(&req, env) {
+            let msg = err.to_string();
+            if msg.contains("unauthorized") {
+                return Response::error(msg, 401);
+            }
+            return Err(err);
+        }
+        let sink = match canary_audit_remote_sink_settings(env)? {
+            Some(settings) => settings,
+            None => {
+                return Response::error(
+                    format!(
+                        "archive upload disabled; missing {}",
+                        ENV_CANARY_ARCHIVE_SINK_URL
+                    ),
+                    404,
+                );
+            }
+        };
+        let signing_key = match artifact_signing_key_required(env) {
+            Ok(key) => key,
+            Err(err) => {
+                let msg = err.to_string();
+                if msg.contains("disabled") {
+                    return Response::error(msg, 404);
+                }
+                return Err(err);
+            }
+        };
+        let key_id = artifact_signing_key_id(env);
+        let mut archive_req: CanaryAuditArchiveRequest = req.json().await.map_err(|e| {
+            worker::Error::RustError(format!("invalid archive upload payload: {e}"))
+        })?;
+        let requested_limit = archive_req.limit.to_string();
+        archive_req.limit = parse_canary_audit_recent_limit(Some(requested_limit.as_str()))
+            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let delete_after_upload = archive_req.delete_archived;
+        archive_req.delete_archived = false;
+        let preview = archive_canary_audit_records(env, archive_req.clone()).await?;
+        let worker_name = env
+            .var(ENV_WORKER_NAME)
+            .ok()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "zeroclaw-edge-worker".to_string());
+        let payload = CanaryAuditRemoteArchivePayload {
+            generated_at_ms: worker::Date::now().as_millis(),
+            worker_name,
+            source: "canary_audit_archive_upload".to_string(),
+            limit: archive_req.limit,
+            before_ms: archive_req.before_ms,
+            records: preview.records.clone(),
+        };
+        let bundle = sign_canary_audit_remote_archive_payload(
+            payload,
+            signing_key.as_str(),
+            key_id.as_deref(),
+        )
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let sink_status = upload_canary_audit_remote_archive_bundle(&sink, &bundle).await?;
+        let (deleted_records, remaining_records) = if delete_after_upload {
+            let mut delete_req = archive_req;
+            delete_req.delete_archived = true;
+            let deleted = archive_canary_audit_records(env, delete_req).await?;
+            (deleted.deleted, deleted.remaining)
+        } else {
+            (0usize, preview.remaining)
+        };
+        Response::from_json(&CanaryAuditRemoteArchiveUploadResponse {
+            sink_url: sink.url,
+            sink_status,
+            uploaded_records: preview.records.len(),
+            deleted_records,
+            remaining_records,
+            payload_sha256_hex: bundle.signature.payload_sha256_hex,
+        })
+    }
+
     #[event(fetch)]
     pub async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         if req.method() == Method::Get && req.path().starts_with("/canary/drill/metrics/") {
@@ -2035,6 +2318,20 @@ mod wasm_runtime {
             return match run_canary_audit_clear(req, &env).await {
                 Ok(resp) => Ok(resp),
                 Err(err) => Response::error(format!("canary audit clear failed: {err}"), 500),
+            };
+        }
+        if req.method() == Method::Post && req.path() == "/canary/audit/archive" {
+            return match run_canary_audit_archive(req, &env).await {
+                Ok(resp) => Ok(resp),
+                Err(err) => Response::error(format!("canary audit archive failed: {err}"), 500),
+            };
+        }
+        if req.method() == Method::Post && req.path() == "/canary/audit/archive/upload" {
+            return match run_canary_audit_archive_upload(req, &env).await {
+                Ok(resp) => Ok(resp),
+                Err(err) => {
+                    Response::error(format!("canary audit archive upload failed: {err}"), 500)
+                }
             };
         }
 
@@ -2315,6 +2612,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_canary_audit_remote_sink_settings_is_optional_and_validated() {
+        let disabled = parse_canary_audit_remote_sink_settings(|_key| None).unwrap();
+        assert!(disabled.is_none());
+
+        let mut env = HashMap::<String, String>::new();
+        env.insert(
+            ENV_CANARY_ARCHIVE_SINK_URL.to_string(),
+            "https://sink.example/upload".to_string(),
+        );
+        env.insert(
+            ENV_CANARY_ARCHIVE_SINK_AUTH_TOKEN.to_string(),
+            "sink-token".to_string(),
+        );
+        let settings = parse_canary_audit_remote_sink_settings(|key| env.get(key).cloned())
+            .unwrap()
+            .unwrap();
+        assert_eq!(settings.url, "https://sink.example/upload");
+        assert_eq!(settings.auth_token.as_deref(), Some("sink-token"));
+
+        env.insert(
+            ENV_CANARY_ARCHIVE_SINK_URL.to_string(),
+            "ftp://invalid".to_string(),
+        );
+        assert!(parse_canary_audit_remote_sink_settings(|key| env.get(key).cloned()).is_err());
+    }
+
+    #[test]
     fn drill_scenarios_for_all_target_is_deterministic() {
         let scenarios = drill_scenarios_for_target(CanaryDrillExportTarget::All);
         assert_eq!(
@@ -2362,6 +2686,51 @@ mod tests {
             sign_canary_drill_artifact_payload(payload, signing_key, Some("key-v1")).unwrap();
         assert_eq!(bundle.signature.algorithm, "hmac-sha256");
         assert_eq!(bundle.signature.key_id.as_deref(), Some("key-v1"));
+
+        let payload_bytes = serde_json::to_vec(&bundle.payload).unwrap();
+        let payload_hash = Sha256::digest(&payload_bytes);
+        assert_eq!(
+            bundle.signature.payload_sha256_hex,
+            hex_encode_lower(payload_hash.as_ref())
+        );
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(signing_key.as_bytes()).unwrap();
+        mac.update(&payload_bytes);
+        let expected_signature = hex_encode_lower(&mac.finalize().into_bytes());
+        assert_eq!(
+            bundle.signature.signature_hmac_sha256_hex,
+            expected_signature
+        );
+    }
+
+    #[test]
+    fn sign_canary_audit_remote_archive_payload_generates_verifiable_hmac() {
+        let payload = CanaryAuditRemoteArchivePayload {
+            generated_at_ms: 1_706_000_000_111,
+            worker_name: "edge-worker".to_string(),
+            source: "canary_audit_archive_upload".to_string(),
+            limit: 2,
+            before_ms: Some(1_706_000_000_000),
+            records: vec![CanaryAuditRecord {
+                recorded_at_ms: 1_706_000_000_001,
+                cron: "drill:promote".to_string(),
+                event_type: Some("scheduled".to_string()),
+                dry_run: true,
+                stable_version_id: "stable-v1".to_string(),
+                canary_version_id: "canary-v2".to_string(),
+                decision: "Promote { to: Percent(25) }".to_string(),
+                applied_canary_percent: Some(25),
+                total_requests: 120,
+                failed_requests: 0,
+                p95_latency_ms: 120,
+            }],
+        };
+        let signing_key = "archive-signing-key";
+        let bundle =
+            sign_canary_audit_remote_archive_payload(payload, signing_key, Some("archive-key-v1"))
+                .unwrap();
+        assert_eq!(bundle.signature.algorithm, "hmac-sha256");
+        assert_eq!(bundle.signature.key_id.as_deref(), Some("archive-key-v1"));
 
         let payload_bytes = serde_json::to_vec(&bundle.payload).unwrap();
         let payload_hash = Sha256::digest(&payload_bytes);
