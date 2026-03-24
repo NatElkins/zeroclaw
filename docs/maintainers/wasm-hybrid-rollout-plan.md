@@ -143,6 +143,12 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
        HTTP memory service (`memory_http::tests::edge_and_native_readers_reconcile_over_shared_memory_service`)
      - wired optional long-term memory recall/store in worker `/chat` path
        (`ZEROCLAW_LONG_TERM_MEMORY_BASE_URL`, optional bearer token + recall limit)
+23. Durable canary audit storage
+   - status: complete in stack
+   - persist each canary tick outcome in Worker Durable Object storage (`CanaryAuditObject`)
+   - expose authenticated audit retrieval endpoint (`GET /canary/audit/recent?limit=N`)
+   - local end-to-end verification with `wrangler dev` + drill scenarios confirms promote/hold/rollback
+     records are durably queryable in newest-first order
 
 ## Milestones And Exit Criteria
 
