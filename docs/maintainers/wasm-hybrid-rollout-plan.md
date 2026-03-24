@@ -118,7 +118,7 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
 ## Upcoming
 
 19. Cloudflare deployed Worker smoke (real edge URL)
-   - status: pending
+   - status: complete in stack
    - deploy `zeroclaw-edge-worker` to Cloudflare (dev account first)
    - configure secrets/vars (`OPENROUTER_API_KEY`, canary vars, Durable Object migration)
    - verify remote `/healthz`, `/chat`, `/chat/reset`, `/tick` from outside local machine
