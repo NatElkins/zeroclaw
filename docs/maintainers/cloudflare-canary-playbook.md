@@ -147,6 +147,8 @@ The Worker exposes authenticated drill endpoints:
 - `POST /canary/drill/tick/{promote|hold|rollback}`
 - `POST /canary/drill/export/{all|promote|hold|rollback}?limit=<n>`
 - `GET /canary/audit/recent?limit=<n>`
+- `POST /canary/audit/archive`
+- `POST /canary/audit/archive/upload`
 - `POST /canary/audit/clear`
 
 These use a deterministic metrics payload per scenario and force dry-run traffic updates
@@ -154,6 +156,10 @@ so drills can exercise the full decision/apply path without mutating production 
 Each tick is also persisted in Durable Object audit storage and retrievable from
 `/canary/audit/recent`. Export calls return a signed incident bundle payload
 containing drill runs + recent audit records for postmortems.
+Retention is enforced on append via `ZEROCLAW_CANARY_AUDIT_RETENTION_MS`
+(default 7 days), plus bounded record count via `ZEROCLAW_CANARY_AUDIT_MAX_RECORDS`.
+Remote upload is available via `ZEROCLAW_CANARY_ARCHIVE_SINK_URL` and sends signed
+archive bundles off-worker for long-term retention.
 
 ### Prerequisites
 
@@ -175,7 +181,17 @@ Optional key-id label:
 npx wrangler secret put ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY_ID
 ```
 
-2. Ensure deployed Worker URL is known.
+3. Configure remote archival sink:
+
+```bash
+npx wrangler secret put ZEROCLAW_CANARY_ARCHIVE_SINK_AUTH_TOKEN
+```
+
+```bash
+npx wrangler deploy --var ZEROCLAW_CANARY_ARCHIVE_SINK_URL:https://archive.example/zeroclaw/canary
+```
+
+4. Ensure deployed Worker URL is known.
 
 ### Run Drill
 
@@ -212,6 +228,33 @@ curl -fsS "https://<worker>.<subdomain>.workers.dev/canary/audit/recent?limit=20
   -H "x-zeroclaw-drill-token: <your-drill-token>"
 ```
 
+To archive/purge older audit records in operator workflows:
+
+```bash
+ZEROCLAW_EDGE_DEMO_BASE_URL="https://<worker>.<subdomain>.workers.dev" \
+ZEROCLAW_CANARY_DRILL_TOKEN="<your-drill-token>" \
+ZEROCLAW_CANARY_AUDIT_ARCHIVE_LIMIT=200 \
+ZEROCLAW_CANARY_AUDIT_ARCHIVE_DELETE=1 \
+./scripts/edge_worker_canary_audit_archive.sh
+```
+
+Optional time cutoff for archival:
+
+```bash
+ZEROCLAW_CANARY_AUDIT_ARCHIVE_BEFORE_MS=<unix-ms-cutoff> \
+./scripts/edge_worker_canary_audit_archive.sh
+```
+
+To archive directly to the configured remote sink (signed bundle upload):
+
+```bash
+ZEROCLAW_EDGE_DEMO_BASE_URL="https://<worker>.<subdomain>.workers.dev" \
+ZEROCLAW_CANARY_DRILL_TOKEN="<your-drill-token>" \
+ZEROCLAW_CANARY_AUDIT_ARCHIVE_LIMIT=200 \
+ZEROCLAW_CANARY_AUDIT_ARCHIVE_DELETE=1 \
+./scripts/edge_worker_canary_archive_upload.sh
+```
+
 ### Auto-Export Signed Incident Artifact Bundle
 
 ```bash
@@ -238,4 +281,4 @@ ZEROCLAW_CANARY_DRILL_TOKEN="<your-drill-token>" \
 
 ## Intended Next Step
 
-1. Add retention + export policies for canary audit records (windowing and archival).
+1. Add sink delivery retry/dead-letter strategy for failed remote archive uploads.
