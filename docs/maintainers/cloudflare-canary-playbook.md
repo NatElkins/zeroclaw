@@ -20,12 +20,15 @@ This playbook defines how ZeroClaw evaluates canary safety before changing edge 
   - `crates/zeroclaw-edge/src/canary_metrics.rs` (`curl` JSON metrics source)
   - `crates/zeroclaw-edge/src/canary_tick.rs` (one-shot runtime path)
   - integration-style tests cover: local telemetry HTTP server -> canary decision -> traffic split apply command
+- Scheduler/trigger integration:
+  - `crates/zeroclaw-edge/src/canary_schedule.rs`
+  - fixed-interval trigger and scheduler loop policy (`continue_on_error`, max consecutive failures)
+  - integration-style tests for multi-tick promote -> rollback behavior
 - Deterministic CI gate:
   - `./scripts/ci/cloudflare_canary_check.sh`
 - WASM portability check included in canary gate.
 
-This PR does **not** yet run autonomous scheduled production canary loops.
-It now includes the one-shot runtime execution path, so the remaining work is scheduler wiring and production rollout policy operations.
+This PR now includes scheduled loop wiring primitives, but does **not** yet wire Cloudflare Cron events or a production telemetry backend adapter.
 
 ## Rollout Inputs
 
@@ -70,10 +73,11 @@ This validates:
 2. canary orchestration behavior (hold/promote/rollback/apply/persist)
 3. wasm32 compile viability for `zeroclaw-edge`
 4. one-shot telemetry/runtime integration behavior
+5. scheduled trigger behavior and multi-tick integration flow
 
 ## Intended Next Step
 
-1. Trigger one-shot tick on a schedule (Cron trigger or external scheduler).
+1. Bind Cloudflare Cron events (or external scheduler) to scheduler trigger boundary.
 2. Feed production telemetry endpoint into `CurlCanaryMetricsSource`.
-3. Execute `run_cloudflare_one_shot_canary_tick(...)` each interval.
+3. Execute scheduled run loop in production environment with rollout policy defaults.
 4. Persist decision/audit events for postmortems and rollback drills.

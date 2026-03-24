@@ -91,10 +91,16 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - deterministic orchestration tick test through injected command-runner boundary
 15. One-shot canary runtime integration
    - PR: #19
-   - status: in progress in stack
+   - status: complete in stack
    - telemetry pull adapter (`curl` JSON metrics source) for canary inputs
    - one-shot runtime path: metrics -> decision -> `wrangler versions deploy`
    - integration-style tests using local HTTP telemetry + real subprocess boundaries
+16. Scheduled canary trigger wiring
+   - PR: #20
+   - status: in progress in stack
+   - fixed-interval trigger + scheduler loop policy
+   - reusable tick-runner boundary with stateful controller progression across intervals
+   - integration-style tests for promote->rollback across scheduled ticks
 
 ## Milestones And Exit Criteria
 
