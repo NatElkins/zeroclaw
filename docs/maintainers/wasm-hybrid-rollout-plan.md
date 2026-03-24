@@ -155,6 +155,19 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
      returning signed incident bundle payloads (HMAC-SHA256) with drill runs + audit records
    - add `scripts/edge_worker_canary_export_artifact.sh` for operator-side export + tarball packaging
    - add deterministic unit coverage for export target parsing and signature generation/verification
+25. Canary audit retention + archival policy
+   - status: complete in stack
+   - enforce time-window retention on append (`ZEROCLAW_CANARY_AUDIT_RETENTION_MS`) plus max-record cap
+   - add authenticated `POST /canary/audit/archive` endpoint for bounded archival export with optional deletion
+   - add `scripts/edge_worker_canary_audit_archive.sh` for operator-driven archival snapshots
+   - add deterministic unit coverage for retention pruning and archival record selection/removal
+26. Remote archival sink wiring (signed upload target)
+   - status: complete in stack
+   - add authenticated `POST /canary/audit/archive/upload` endpoint for archive->sign->upload flow
+   - add typed remote sink config (`ZEROCLAW_CANARY_ARCHIVE_SINK_URL`, optional bearer token)
+   - add `scripts/edge_worker_canary_archive_upload.sh` for operator-triggered remote uploads
+   - add deterministic tests for sink config parsing and remote archive bundle signing
+   - local end-to-end verification with `wrangler dev` + local HTTP sink confirms signed payload delivery
 
 ## Milestones And Exit Criteria
 
