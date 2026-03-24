@@ -84,7 +84,7 @@ where
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<R> CanaryMetricsSource for CurlCanaryMetricsSource<R>
 where
     R: CommandRunner,
@@ -94,6 +94,7 @@ where
         let output = self
             .runner
             .run(&self.config.curl_bin, &args, self.config.cwd.as_ref())
+            .await
             .context("failed executing curl metrics command")?;
 
         if output.status_code != 0 {
@@ -141,8 +142,9 @@ mod tests {
         }
     }
 
+    #[async_trait(?Send)]
     impl CommandRunner for RecordingRunner {
-        fn run(
+        async fn run(
             &self,
             program: &str,
             args: &[String],
