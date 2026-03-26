@@ -139,6 +139,70 @@ ZEROCLAW_EDGE_DEMO_SESSION_ID=edge-room-1 \
 ./scripts/edge_worker_chat_demo.sh
 ```
 
+## Hybrid Worker + Native Delegate Demo (No Mocks)
+
+The hybrid demo proves both runtime paths end-to-end:
+
+1. Worker-only request (`memory:*`) handled in edge runtime (`delegated=false`)
+2. delegated shell request (`delegate:shell:*`) routed to native service (`delegated=true`)
+
+Run local no-mock E2E:
+
+```bash
+./scripts/edge_worker_hybrid_demo.sh
+```
+
+This script starts:
+
+1. local native delegate service (`cargo run -p zeroclaw-edge-native-delegate`)
+2. local Worker (`wrangler dev`) with delegation env wiring
+3. deterministic scenario A/B calls and evidence capture in `artifacts/edge-hybrid-demo-*`
+
+Deployed Cloudflare E2E:
+
+1. Expose a reachable native delegate endpoint (example local tunnel):
+
+```bash
+ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN=<token> cargo run -p zeroclaw-edge-native-delegate
+npx localtunnel --port 8091
+```
+
+2. Deploy Worker with delegation enabled and endpoint/auth wired:
+
+```bash
+cd crates/zeroclaw-edge-worker
+toolchain_bin="$(dirname "$(rustup which --toolchain stable rustc)")"
+PATH="${toolchain_bin}:$PATH" RUSTC="${toolchain_bin}/rustc" RUSTDOC="${toolchain_bin}/rustdoc" \
+CLOUDFLARE_ACCOUNT_ID=<account-id> \
+npx wrangler deploy \
+  --var ZEROCLAW_EDGE_DELEGATION_ENABLED:true \
+  --var ZEROCLAW_EDGE_DELEGATE_ENDPOINT_URL:https://<public-delegate-host> \
+  --var ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN:<token> \
+  --var ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS:shell \
+  --var CLOUDFLARE_ACCOUNT_ID:<account-id>
+```
+
+3. Run deployed validation:
+
+```bash
+ZEROCLAW_EDGE_DEMO_BASE_URL="https://<worker>.<subdomain>.workers.dev" \
+./scripts/edge_worker_hybrid_demo.sh
+```
+
+Expected evidence artifacts:
+
+- `scenario-a-memory-store.json` with `"delegated": false`
+- `scenario-b-delegate.json` with `"delegated": true`
+- local mode also writes `scenario-c-delegate-readback.json` + verifies filesystem side effect
+
+Rollback switch:
+
+```bash
+cd crates/zeroclaw-edge-worker
+CLOUDFLARE_ACCOUNT_ID=<account-id> \
+npx wrangler deploy --var ZEROCLAW_EDGE_DELEGATION_ENABLED:false
+```
+
 ## Deployed Canary Drill (Promote/Hold/Rollback)
 
 The Worker exposes authenticated drill endpoints:

@@ -23,6 +23,7 @@ pub mod memory_http;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -131,7 +132,7 @@ pub struct NativeWorkerResponse {
 }
 
 /// Delegate execution boundary implemented by a native worker bridge.
-#[async_trait]
+#[async_trait(?Send)]
 pub trait DelegateExecutor: Send + Sync {
     async fn execute_tool(
         &self,
@@ -226,7 +227,7 @@ impl LocalNativeWorker {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl DelegateExecutor for LocalNativeWorker {
     async fn execute_tool(
         &self,
@@ -419,10 +420,18 @@ where
 }
 
 fn unix_timestamp_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    #[cfg(target_arch = "wasm32")]
+    {
+        return (js_sys::Date::now() / 1000.0) as u64;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
 }
 
 #[cfg(test)]
@@ -546,7 +555,7 @@ mod tests {
         }
     }
 
-    #[async_trait]
+    #[async_trait(?Send)]
     impl DelegateExecutor for StubDelegate {
         async fn execute_tool(
             &self,

@@ -1,0 +1,15 @@
+[package]
+name = "zeroclaw-edge-native-delegate"
+version = "0.1.0"
+edition = "2021"
+description = "Native delegated tool HTTP service for ZeroClaw edge hybrid demos"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "zeroclaw-edge-native-delegate"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+serde_json = "1.0"
+zeroclaw-edge = { path = "../zeroclaw-edge" }

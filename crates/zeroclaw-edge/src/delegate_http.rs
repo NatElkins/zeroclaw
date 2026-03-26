@@ -357,7 +357,7 @@ impl NativeDelegateHttpClient<SystemDelegateCommandRunner> {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<R> DelegateExecutor for NativeDelegateHttpClient<R>
 where
     R: DelegateCommandRunner,

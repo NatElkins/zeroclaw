@@ -12357,10 +12357,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "js-sys",
  "serde",
  "serde_json",
  "tokio",
  "zeroclaw-core",
+]
+
+[[package]]
+name = "zeroclaw-edge-native-delegate"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "zeroclaw-edge",
 ]
 
 [[package]]
@@ -12374,6 +12384,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "worker",
+ "zeroclaw-core",
  "zeroclaw-edge",
 ]
 
