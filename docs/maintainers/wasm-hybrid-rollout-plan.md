@@ -60,17 +60,20 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - status: in progress in stack
 9. `spike(edge): add zeroclaw-edge worker viability harness`
    - PR: #13
-   - status: in progress in stack
+   - status: complete in stack
+10. End-to-end local simulation harness
+   - PR: #14
+   - status: complete in stack
+   - local edge runtime stubs + delegated native worker
+   - deterministic scenario tests (chat -> tool selection -> delegation -> persistence)
 
 ## Next
 
-10. End-to-end local simulation harness
-   - PR: #14
-   - status: in progress in stack
-   - local edge runtime stubs + delegated native worker
-   - deterministic scenario tests (chat -> tool selection -> delegation -> persistence)
 11. Cloudflare canary deployment
+   - PR: #15
+   - status: in progress in stack
    - canary env + observability SLOs + rollback controls
+   - typed rollout controller with deterministic promote/hold/rollback behavior
 
 ## Milestones And Exit Criteria
 
@@ -115,10 +118,12 @@ Exit criteria:
 
 - Cloudflare canary deployed with rollback automation.
 - cost/latency/error-rate dashboards available.
+- deterministic canary state machine coverage in local CI.
 
 Exit criteria:
 - SLO burn acceptable for 7-day canary.
 - rollback drill completed successfully.
+- `./scripts/ci/cloudflare_canary_check.sh` passes.
 
 ## Local Iteration Strategy
 
@@ -126,6 +131,7 @@ Exit criteria:
 2. Run feature-gated checks locally:
    - `cargo check --features runtime-wasm`
    - `cargo check -p zeroclaw-edge --target wasm32-unknown-unknown`
+   - `./scripts/ci/cloudflare_canary_check.sh`
 3. Keep deterministic integration fixtures for:
    - tool selection decisions
    - delegation routing
@@ -155,3 +161,4 @@ Exit criteria:
 
 - This plan is the canonical reference for this stack. Keep it updated as each PR lands.
 - PR bodies should reference this document for progress state and acceptance criteria.
+- Canary execution details live in `docs/maintainers/cloudflare-canary-playbook.md`.

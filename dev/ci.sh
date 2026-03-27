@@ -86,6 +86,7 @@ Commands:
   test-live       Run live tests (requires credentials)
   test-wasm-runtime Run wasm runtime feature tests
   test-edge-spike Run edge spike tests + wasm32 compile check
+  test-cloudflare-canary Run typed canary rollout checks + wasm32 portability
   test-hybrid-local Run local hybrid readiness suite (component+integration+system+shell+delegate+wasm)
   test-hybrid-services Run service-backed hybrid suite (Postgres + wasm runtime + remote memory)
   test-manual     Run manual test scripts (dockerignore, etc.)
@@ -153,6 +154,10 @@ case "$1" in
     run_in_ci "./scripts/ci/edge_wasm_spike_check.sh"
     ;;
 
+  test-cloudflare-canary)
+    run_in_ci "./scripts/ci/cloudflare_canary_check.sh"
+    ;;
+
   test-hybrid-local)
     run_in_ci "cargo test --test component --locked --verbose"
     run_in_ci "cargo test --test integration --locked --verbose"
@@ -162,6 +167,25 @@ case "$1" in
     run_in_ci "cargo test --features runtime-wasm runtime::tests::factory_wasm --locked --verbose"
     run_in_ci "cargo test --features runtime-wasm runtime::wasm::tests:: --locked --verbose"
     run_in_ci "./scripts/ci/edge_wasm_spike_check.sh"
+    run_in_ci "./scripts/ci/cloudflare_canary_check.sh"
+    ;;
+
+  test-hybrid-services)
+    postgres_url="postgres://zeroclaw:zeroclaw@postgres-hybrid:5432/zeroclaw_hybrid"
+    "${compose_cmd[@]}" up -d postgres-hybrid
+    set +e
+    wait_for_service_ready postgres-hybrid 90
+    status=$?
+    if [ "$status" -eq 0 ]; then
+      run_in_ci "ZEROCLAW_TEST_POSTGRES_URL='${postgres_url}' cargo test --features 'memory-postgres runtime-wasm' --test integration hybrid_postgres_memory --locked --verbose"
+      status=$?
+    fi
+    set -e
+
+    cleanup_service postgres-hybrid
+    if [ "$status" -ne 0 ]; then
+      exit "$status"
+    fi
     ;;
 
   test-hybrid-services)
