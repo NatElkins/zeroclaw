@@ -52,19 +52,24 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
 6. `test(runtime): add wasm runtime activation smoke coverage`
    - PR: #8
    - status: open in stack
+7. `feat(memory): add http backend for edge storage adapters`
+   - PR: #11
+   - status: open in stack
+8. `feat(tools): add runtime capability-fallback delegation proxies`
+   - PR: #12
+   - status: in progress in stack
+9. `spike(edge): add zeroclaw-edge worker viability harness`
+   - PR: #13
+   - status: in progress in stack
 
 ## Next
 
-7. Memory backend abstraction for edge
-   - network-first memory adapter for WASM runtimes
-   - shared schema compatibility tests between native and edge adapters
-8. Delegation control-plane integration
-   - route shell/filesystem-required tasks to native delegates
-   - enforce policy and capability boundaries in one place
-9. End-to-end local simulation harness
+10. End-to-end local simulation harness
+   - PR: #14
+   - status: in progress in stack
    - local edge runtime stubs + delegated native worker
    - deterministic scenario tests (chat -> tool selection -> delegation -> persistence)
-10. Cloudflare canary deployment
+11. Cloudflare canary deployment
    - canary env + observability SLOs + rollback controls
 
 ## Milestones And Exit Criteria
@@ -96,7 +101,17 @@ Exit criteria:
 - deterministic integration tests for delegation success/failure paths.
 - policy checks enforced before and after delegation.
 
-## Milestone D: Canary Production Readiness
+## Milestone D: Edge Feasibility Gate (New)
+
+- worker-oriented edge runtime crate compiles for `wasm32-unknown-unknown`.
+- at least one local worker-like scenario proves hybrid handoff semantics:
+  request -> delegate -> memory persistence.
+
+Exit criteria:
+- `cargo check -p zeroclaw-edge --target wasm32-unknown-unknown` passes.
+- `cargo test -p zeroclaw-edge` passes with deterministic round-trip coverage.
+
+## Milestone E: Canary Production Readiness
 
 - Cloudflare canary deployed with rollback automation.
 - cost/latency/error-rate dashboards available.
@@ -110,6 +125,7 @@ Exit criteria:
 1. Use runtime stubs in tests to model capability subsets (`no-cap`, `fs-only`, `full`).
 2. Run feature-gated checks locally:
    - `cargo check --features runtime-wasm`
+   - `cargo check -p zeroclaw-edge --target wasm32-unknown-unknown`
 3. Keep deterministic integration fixtures for:
    - tool selection decisions
    - delegation routing
