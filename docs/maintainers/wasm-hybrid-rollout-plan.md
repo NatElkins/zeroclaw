@@ -74,6 +74,11 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - status: in progress in stack
    - canary env + observability SLOs + rollback controls
    - typed rollout controller with deterministic promote/hold/rollback behavior
+12. Canary orchestration execution path
+   - PR: #16
+   - status: in progress in stack
+   - metrics ingestion + traffic split apply + event sink persistence
+   - deterministic end-to-end canary tick simulations
 
 ## Milestones And Exit Criteria
 
@@ -119,6 +124,7 @@ Exit criteria:
 - Cloudflare canary deployed with rollback automation.
 - cost/latency/error-rate dashboards available.
 - deterministic canary state machine coverage in local CI.
+- deterministic canary orchestration coverage (decision -> apply/rollback -> audit event).
 
 Exit criteria:
 - SLO burn acceptable for 7-day canary.
