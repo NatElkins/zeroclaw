@@ -71,12 +71,12 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
 
 11. Cloudflare canary deployment
    - PR: #15
-   - status: in progress in stack
+   - status: complete in stack
    - canary env + observability SLOs + rollback controls
    - typed rollout controller with deterministic promote/hold/rollback behavior
 12. Canary orchestration execution path
    - PR: #16
-   - status: in progress in stack
+   - status: complete in stack
    - metrics ingestion + traffic split apply + event sink persistence
    - deterministic end-to-end canary tick simulations
 13. Cloudflare CLI traffic client wiring
@@ -103,11 +103,38 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - integration-style tests for promote->rollback across scheduled ticks
 17. Cloudflare Cron event binding
    - PR: #21
-   - status: in progress in stack
+   - status: complete in stack
    - typed Cloudflare scheduled event payload validation
    - cron event -> one canary tick execution bridge
    - integration-style test for cron payload to traffic-split command path
    - local Worker `/chat` end-to-end smoke via `./scripts/edge_worker_chat_demo.sh`
+18. Worker chat session persistence via Durable Objects
+   - PR: #22
+   - status: complete in stack
+   - add `session_id` aware `/chat` path backed by Cloudflare Durable Object storage
+   - persist/retrieve bounded chat history without filesystem assumptions
+   - local deterministic demo: multi-turn recall in same session
+
+## Upcoming
+
+19. Cloudflare deployed Worker smoke (real edge URL)
+   - status: complete in stack
+   - deploy `zeroclaw-edge-worker` to Cloudflare (dev account first)
+   - configure secrets/vars (`OPENROUTER_API_KEY`, canary vars, Durable Object migration)
+   - verify remote `/healthz`, `/chat`, `/chat/reset`, `/tick` from outside local machine
+20. Canary drill on deployed Worker
+   - status: pending
+   - run promote/hold/rollback drill against real metrics endpoint wiring
+   - capture rollback evidence and operator runbook updates
+21. Hybrid native delegation service path
+   - status: pending
+   - add authenticated edge->native delegate call boundary for filesystem/shell tool fallback
+   - keep edge runtime capability-safe while enabling heavy operations through delegation
+22. Shared long-term memory backend integration
+   - status: pending
+   - keep Durable Object history as short-term session memory
+   - wire HTTP memory backend (TigerFS-like service) for durable cross-session memory
+   - add reconciliation tests across edge/native readers
 
 ## Milestones And Exit Criteria
 
@@ -125,6 +152,7 @@ Exit criteria:
 
 - memory adapter runs in WASM without local filesystem assumptions.
 - shared type compatibility guaranteed against native memory entry types.
+- Worker `/chat` supports explicit session persistence with Durable Objects.
 
 Exit criteria:
 - round-trip tests prove compatibility across native and WASM adapter boundaries.
