@@ -48,18 +48,16 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - status: complete in stack
 5. `feat(runtime): harden runtime capability contract and kind matrix tests`
    - PR: #7
-   - status: complete in stack
+   - status: open in stack
 6. `test(runtime): add wasm runtime activation smoke coverage`
    - PR: #8
-   - status: complete in stack
+   - status: open in stack
 7. `feat(memory): add http backend for edge storage adapters`
    - PR: #11
-   - status: complete in stack
+   - status: open in stack
 8. `feat(tools): add runtime capability-fallback delegation proxies`
    - PR: #12
-   - status: superseded in stack
-   - superseded by PR #24 edge/native delegation boundary (`crates/zeroclaw-edge/src/delegate_http.rs`)
-     and deterministic end-to-end delegation/persistence coverage in PR #14 and PR #25
+   - status: in progress in stack
 9. `spike(edge): add zeroclaw-edge worker viability harness`
    - PR: #13
    - status: complete in stack
