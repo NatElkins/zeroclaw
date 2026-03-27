@@ -21,16 +21,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# 1. Copy manifests to cache dependencies
+# 1. Copy manifests and local path dependencies to cache dependencies
 COPY Cargo.toml Cargo.lock ./
-# Include every workspace member: Cargo.lock is generated for the full workspace.
-# Previously we used sed to drop `crates/robot-kit`, which made the manifest disagree
-# with the lockfile and caused `cargo --locked` to fail (Cargo refused to rewrite the lock).
-COPY crates/robot-kit/ crates/robot-kit/
-COPY crates/aardvark-sys/ crates/aardvark-sys/
-# Include tauri workspace member manifest (desktop app, but needed for workspace resolution).
-# .dockerignore whitelists only Cargo.toml; src and build.rs are stubbed below.
-COPY apps/tauri/Cargo.toml apps/tauri/Cargo.toml
+COPY crates/ crates/
 # Create dummy targets declared in Cargo.toml so manifest parsing succeeds.
 RUN mkdir -p src benches apps/tauri/src \
     && echo "fn main() {}" > src/main.rs \
