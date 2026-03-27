@@ -9,15 +9,6 @@ command = "cargo install -q worker-build && worker-build --release"
 [triggers]
 crons = ["*/5 * * * *"]
 
-[durable_objects]
-bindings = [
-  { name = "ZEROCLAW_CHAT_SESSIONS", class_name = "ChatSessionObject" }
-]
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["ChatSessionObject"]
-
 [vars]
 # Required runtime settings.
 ZEROCLAW_CANARY_STABLE_VERSION_ID = "stable-v1"
@@ -33,9 +24,9 @@ ZEROCLAW_CANARY_STAGES = "10:1,25:1,100:1"
 ZEROCLAW_CANARY_MAX_ERROR_RATE_BPS = "100"
 ZEROCLAW_CANARY_MAX_P95_LATENCY_MS = "500"
 ZEROCLAW_CANARY_MIN_REQUEST_COUNT = "10"
-ZEROCLAW_CHAT_HISTORY_MESSAGES = "12"
 
 # Secret required:
 # CLOUDFLARE_API_TOKEN (set via `wrangler secret put CLOUDFLARE_API_TOKEN`)
 # Optional secret:
 # ZEROCLAW_CANARY_METRICS_BEARER_TOKEN
+# ZEROCLAW_CANARY_DRILL_TOKEN (enables authenticated /canary/drill/* endpoints)

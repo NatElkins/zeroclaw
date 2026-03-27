@@ -71,12 +71,12 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
 
 11. Cloudflare canary deployment
    - PR: #15
-   - status: complete in stack
+   - status: in progress in stack
    - canary env + observability SLOs + rollback controls
    - typed rollout controller with deterministic promote/hold/rollback behavior
 12. Canary orchestration execution path
    - PR: #16
-   - status: complete in stack
+   - status: in progress in stack
    - metrics ingestion + traffic split apply + event sink persistence
    - deterministic end-to-end canary tick simulations
 13. Cloudflare CLI traffic client wiring
@@ -103,7 +103,7 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - integration-style tests for promote->rollback across scheduled ticks
 17. Cloudflare Cron event binding
    - PR: #21
-   - status: complete in stack
+   - status: in progress in stack
    - typed Cloudflare scheduled event payload validation
    - cron event -> one canary tick execution bridge
    - integration-style test for cron payload to traffic-split command path
@@ -123,9 +123,10 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - configure secrets/vars (`OPENROUTER_API_KEY`, canary vars, Durable Object migration)
    - verify remote `/healthz`, `/chat`, `/chat/reset`, `/tick` from outside local machine
 20. Canary drill on deployed Worker
-   - status: pending
-   - run promote/hold/rollback drill against real metrics endpoint wiring
-   - capture rollback evidence and operator runbook updates
+   - status: complete in stack
+   - run promote/hold/rollback drill against deployed Worker via authenticated drill endpoints
+   - dry-run apply path verified end-to-end (decision + traffic update command assembly)
+   - rollback evidence + operator runbook commands documented
 21. Hybrid native delegation service path
    - status: pending
    - add authenticated edge->native delegate call boundary for filesystem/shell tool fallback
