@@ -18,6 +18,7 @@ pub mod canary_schedule;
 pub mod canary_tick;
 pub mod cloudflare_cli;
 pub mod cloudflare_deploy_api;
+pub mod delegate_http;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
