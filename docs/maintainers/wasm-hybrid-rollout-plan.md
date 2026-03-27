@@ -39,25 +39,27 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - status: merged into stack baseline
 2. `feat(tools): gate tool registration by runtime capabilities`
    - PR: #2
-   - status: open in stack
+   - status: complete in stack
 3. `test(tools): add filesystem-only runtime registration matrix`
    - PR: #3
-   - status: open in stack
+   - status: complete in stack (implementation commit in stack; branch head later diverged with an unrelated publishability fix)
 4. `feat(runtime): add feature-gated wasm runtime factory/config path`
    - PR: #4
-   - status: open in stack
+   - status: complete in stack
 5. `feat(runtime): harden runtime capability contract and kind matrix tests`
    - PR: #7
-   - status: open in stack
+   - status: complete in stack
 6. `test(runtime): add wasm runtime activation smoke coverage`
    - PR: #8
-   - status: open in stack
+   - status: complete in stack
 7. `feat(memory): add http backend for edge storage adapters`
    - PR: #11
-   - status: open in stack
+   - status: complete in stack
 8. `feat(tools): add runtime capability-fallback delegation proxies`
    - PR: #12
-   - status: in progress in stack
+   - status: superseded in stack
+   - superseded by PR #24 edge/native delegation boundary (`crates/zeroclaw-edge/src/delegate_http.rs`)
+     and deterministic end-to-end delegation/persistence coverage in PR #14 and PR #25
 9. `spike(edge): add zeroclaw-edge worker viability harness`
    - PR: #13
    - status: complete in stack
@@ -251,6 +253,14 @@ Exit criteria:
   - disable edge delegation routes and use existing native registry path.
 - Persistence rollback:
   - switch memory backend config back to current native-default adapter.
+
+## Remaining Work (Post-Plan)
+
+- Land stacked branches to `master` in order and close/supersede orphaned stack branches.
+- Clear current `cargo deny` blockers before merge:
+  - `RUSTSEC-2026-0044` (`aws-lc-sys`)
+  - `RUSTSEC-2026-0048` (`aws-lc-sys`)
+  - `RUSTSEC-2026-0049` (`rustls-webpki`)
 
 ## Notes
 
