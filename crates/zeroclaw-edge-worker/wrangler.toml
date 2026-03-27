@@ -40,6 +40,7 @@ ZEROCLAW_CANARY_MAX_P95_LATENCY_MS = "500"
 ZEROCLAW_CANARY_MIN_REQUEST_COUNT = "10"
 ZEROCLAW_CANARY_AUDIT_MAX_RECORDS = "500"
 ZEROCLAW_CHAT_HISTORY_MESSAGES = "12"
+ZEROCLAW_EDGE_DELEGATION_ENABLED = "false"
 
 # Secret required:
 # CLOUDFLARE_API_TOKEN (set via `wrangler secret put CLOUDFLARE_API_TOKEN`)
@@ -55,3 +56,6 @@ ZEROCLAW_CHAT_HISTORY_MESSAGES = "12"
 # ZEROCLAW_LONG_TERM_MEMORY_BASE_URL (shared memory API, e.g. TigerFS-like service)
 # ZEROCLAW_LONG_TERM_MEMORY_RECALL_LIMIT (default 6, max 25)
 # ZEROCLAW_CANARY_ARCHIVE_SINK_URL (enables /canary/audit/archive/upload remote sink delivery)
+# ZEROCLAW_EDGE_DELEGATE_ENDPOINT_URL (native delegate base URL; /delegate/execute is appended)
+# ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN (bearer token used for edge->native delegate calls)
+# ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS (csv allowlist; default "shell,web_search_tool")

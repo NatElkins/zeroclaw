@@ -9,6 +9,25 @@ model="${ZEROCLAW_OPENROUTER_MODEL:-anthropic/claude-3.5-sonnet}"
 interactive="${ZEROCLAW_EDGE_DEMO_INTERACTIVE:-0}"
 message="${1:-reply with exactly: edge demo ok}"
 
+is_truthy() {
+  local raw="${1:-}"
+  case "${raw,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+message_uses_edge_runtime_prefix() {
+  local raw="$1"
+  if [[ "${raw}" =~ ^[[:space:]]*delegate: ]]; then
+    return 0
+  fi
+  if [[ "${raw}" =~ ^[[:space:]]*memory: ]]; then
+    return 0
+  fi
+  return 1
+}
+
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "missing required command: $1" >&2
@@ -128,14 +147,26 @@ worker_pid="$!"
     exit 1
   fi
 
-  bootstrap_openrouter_key
+  require_openrouter_key=1
+  if [[ "${interactive}" != "1" ]] \
+    && is_truthy "${ZEROCLAW_EDGE_DELEGATION_ENABLED:-0}" \
+    && message_uses_edge_runtime_prefix "${message}"; then
+    require_openrouter_key=0
+  fi
+  if [[ "${require_openrouter_key}" == "1" ]]; then
+    bootstrap_openrouter_key
+  fi
   prepare_rustup_toolchain
 
   env_file="$(mktemp /tmp/zeroclaw-edge-demo.XXXXXX)"
   log_file_base="$(mktemp /tmp/zeroclaw-edge-demo-wrangler.XXXXXX)"
   log_file="${log_file_base}.log"
   mv "${log_file_base}" "${log_file}"
-  printf "OPENROUTER_API_KEY=%s\n" "${OPENROUTER_API_KEY}" >"${env_file}"
+  if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
+    printf "OPENROUTER_API_KEY=%s\n" "${OPENROUTER_API_KEY}" >"${env_file}"
+  else
+    : >"${env_file}"
+  fi
   printf "ZEROCLAW_OPENROUTER_MODEL=%s\n" "${model}" >>"${env_file}"
   if [[ -n "${ZEROCLAW_LONG_TERM_MEMORY_BASE_URL:-}" ]]; then
     printf "ZEROCLAW_LONG_TERM_MEMORY_BASE_URL=%s\n" "${ZEROCLAW_LONG_TERM_MEMORY_BASE_URL}" >>"${env_file}"
@@ -145,6 +176,18 @@ worker_pid="$!"
   fi
   if [[ -n "${ZEROCLAW_LONG_TERM_MEMORY_AUTH_TOKEN:-}" ]]; then
     printf "ZEROCLAW_LONG_TERM_MEMORY_AUTH_TOKEN=%s\n" "${ZEROCLAW_LONG_TERM_MEMORY_AUTH_TOKEN}" >>"${env_file}"
+  fi
+  if [[ -n "${ZEROCLAW_EDGE_DELEGATION_ENABLED:-}" ]]; then
+    printf "ZEROCLAW_EDGE_DELEGATION_ENABLED=%s\n" "${ZEROCLAW_EDGE_DELEGATION_ENABLED}" >>"${env_file}"
+  fi
+  if [[ -n "${ZEROCLAW_EDGE_DELEGATE_ENDPOINT_URL:-}" ]]; then
+    printf "ZEROCLAW_EDGE_DELEGATE_ENDPOINT_URL=%s\n" "${ZEROCLAW_EDGE_DELEGATE_ENDPOINT_URL}" >>"${env_file}"
+  fi
+  if [[ -n "${ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN:-}" ]]; then
+    printf "ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN=%s\n" "${ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN}" >>"${env_file}"
+  fi
+  if [[ -n "${ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS:-}" ]]; then
+    printf "ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS=%s\n" "${ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS}" >>"${env_file}"
   fi
 
   (

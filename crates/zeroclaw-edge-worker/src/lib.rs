@@ -33,6 +33,8 @@ use zeroclaw_edge::cloudflare_cli::{CloudflareWranglerConfig, CommandOutput, Com
 use zeroclaw_edge::cloudflare_deploy_api::{
     build_deployments_api_body, parse_wrangler_versions_deploy,
 };
+#[cfg(any(test, target_arch = "wasm32"))]
+use zeroclaw_edge::DelegatedTool;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 const ENV_STABLE_VERSION_ID: &str = "ZEROCLAW_CANARY_STABLE_VERSION_ID";
@@ -84,6 +86,10 @@ const MAX_CANARY_AUDIT_MAX_RECORDS: usize = 5_000;
 const DEFAULT_CANARY_AUDIT_RECENT_LIMIT: usize = 20;
 #[cfg(any(test, target_arch = "wasm32"))]
 const MAX_CANARY_AUDIT_RECENT_LIMIT: usize = 200;
+#[cfg(any(test, target_arch = "wasm32"))]
+const DEFAULT_CANARY_AUDIT_RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+#[cfg(any(test, target_arch = "wasm32"))]
+const MAX_CANARY_AUDIT_RETENTION_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -305,6 +311,23 @@ struct CanaryAuditRecentResponse {
 struct CanaryAuditAppendRequest {
     record: CanaryAuditRecord,
     max_records: usize,
+    retention_ms: u64,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryAuditArchiveRequest {
+    limit: usize,
+    before_ms: Option<u64>,
+    delete_archived: bool,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryAuditArchiveResponse {
+    records: Vec<CanaryAuditRecord>,
+    deleted: usize,
+    remaining: usize,
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -398,6 +421,23 @@ fn parse_canary_audit_recent_limit(raw: Option<&str>) -> Result<usize> {
         return Err(anyhow!("canary audit limit must be greater than zero"));
     }
     Ok(parsed.min(MAX_CANARY_AUDIT_RECENT_LIMIT))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn parse_canary_audit_retention_ms(raw: Option<&str>) -> Result<u64> {
+    let parsed = raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::parse::<u64>)
+        .transpose()
+        .context("invalid ZEROCLAW_CANARY_AUDIT_RETENTION_MS")?
+        .unwrap_or(DEFAULT_CANARY_AUDIT_RETENTION_MS);
+    if parsed == 0 {
+        return Err(anyhow!(
+            "ZEROCLAW_CANARY_AUDIT_RETENTION_MS must be greater than zero"
+        ));
+    }
+    Ok(parsed.min(MAX_CANARY_AUDIT_RETENTION_MS))
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -666,6 +706,16 @@ const ENV_LONG_TERM_MEMORY_RECALL_LIMIT: &str = "ZEROCLAW_LONG_TERM_MEMORY_RECAL
 const DEFAULT_LONG_TERM_MEMORY_RECALL_LIMIT: usize = 6;
 #[cfg(any(test, target_arch = "wasm32"))]
 const MAX_LONG_TERM_MEMORY_RECALL_LIMIT: usize = 25;
+#[cfg(any(test, target_arch = "wasm32"))]
+const ENV_EDGE_DELEGATION_ENABLED: &str = "ZEROCLAW_EDGE_DELEGATION_ENABLED";
+#[cfg(any(test, target_arch = "wasm32"))]
+const ENV_EDGE_DELEGATE_ENDPOINT_URL: &str = "ZEROCLAW_EDGE_DELEGATE_ENDPOINT_URL";
+#[cfg(any(test, target_arch = "wasm32"))]
+const ENV_EDGE_DELEGATE_AUTH_TOKEN: &str = "ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN";
+#[cfg(any(test, target_arch = "wasm32"))]
+const ENV_EDGE_DELEGATE_ALLOWED_TOOLS: &str = "ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS";
+#[cfg(any(test, target_arch = "wasm32"))]
+const DEFAULT_EDGE_DELEGATE_ALLOWED_TOOLS: &str = "shell,web_search_tool";
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -731,6 +781,14 @@ struct LongTermMemorySettings {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EdgeDelegationSettings {
+    endpoint_url: String,
+    auth_token: String,
+    allowed_tools: Vec<DelegatedTool>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 fn parse_long_term_memory_settings<F>(mut get: F) -> Result<Option<LongTermMemorySettings>>
 where
     F: FnMut(&str) -> Option<String>,
@@ -759,6 +817,220 @@ where
         base_url: base_url.trim_end_matches('/').to_string(),
         auth_token,
         recall_limit: recall_limit.min(MAX_LONG_TERM_MEMORY_RECALL_LIMIT),
+    }))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn is_edge_runtime_prefixed_message(message: &str) -> bool {
+    let trimmed = message.trim_start();
+    trimmed.starts_with("delegate:") || trimmed.starts_with("memory:")
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn delegated_tool_allowed(allowed_tools: &[DelegatedTool], target: DelegatedTool) -> bool {
+    allowed_tools.iter().any(|tool| *tool == target)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn sanitize_tool_payload(raw: &str) -> Option<String> {
+    let trimmed = raw
+        .trim()
+        .trim_matches('?')
+        .trim()
+        .trim_matches('"')
+        .trim_matches('`')
+        .trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn extract_shell_command_from_text(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("run the ") && lower.ends_with(" function") {
+        let cmd = &trimmed["run the ".len()..trimmed.len() - " function".len()];
+        return sanitize_tool_payload(cmd);
+    }
+    for prefix in ["run ", "execute ", "exec "] {
+        if lower.starts_with(prefix) {
+            return sanitize_tool_payload(&trimmed[prefix.len()..]);
+        }
+    }
+    if lower == "list files" || lower == "show files" {
+        return Some("ls -la".to_string());
+    }
+    let first = lower.split_whitespace().next().unwrap_or_default();
+    if [
+        "ls", "pwd", "whoami", "git", "cat", "echo", "rg", "du", "df", "ps",
+    ]
+    .contains(&first)
+    {
+        return sanitize_tool_payload(trimmed);
+    }
+    None
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn extract_web_search_query_from_text(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    for prefix in [
+        "search online for ",
+        "search the web for ",
+        "search web for ",
+        "look up ",
+        "find news about ",
+        "find articles about ",
+        "latest news about ",
+        "recent news about ",
+        "can you search online for ",
+        "please search online for ",
+        "could you search online for ",
+    ] {
+        if lower.starts_with(prefix) {
+            return sanitize_tool_payload(&trimmed[prefix.len()..]);
+        }
+    }
+
+    if lower.contains("recent news") || lower.contains("latest news") {
+        if let Some(idx) = lower.find("about ") {
+            let about_start = idx + "about ".len();
+            return sanitize_tool_payload(&trimmed[about_start..]);
+        }
+        return sanitize_tool_payload(trimmed);
+    }
+
+    if lower.contains("search online")
+        || lower.contains("search the web")
+        || lower.contains("search web")
+        || lower.contains("look up")
+        || (lower.starts_with("find me ") && lower.contains("online"))
+    {
+        return sanitize_tool_payload(trimmed);
+    }
+
+    let has_search_verb =
+        lower.contains("search") || lower.contains("look up") || lower.contains("find");
+    let has_online_or_news_scope = lower.contains("news")
+        || lower.contains("online")
+        || lower.contains("web")
+        || lower.contains("internet")
+        || lower.contains("today");
+    if has_search_verb && has_online_or_news_scope {
+        return sanitize_tool_payload(trimmed);
+    }
+    None
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn extract_web_fetch_url_from_text(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    for prefix in ["fetch ", "open ", "read "] {
+        if lower.starts_with(prefix) {
+            let maybe_url = trimmed[prefix.len()..].trim();
+            if maybe_url.starts_with("http://") || maybe_url.starts_with("https://") {
+                return Some(maybe_url.to_string());
+            }
+        }
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Some(trimmed.to_string());
+    }
+    None
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn route_message_to_edge_runtime(message: &str, allowed_tools: &[DelegatedTool]) -> Option<String> {
+    if is_edge_runtime_prefixed_message(message) {
+        return Some(message.trim().to_string());
+    }
+    if delegated_tool_allowed(allowed_tools, DelegatedTool::Shell) {
+        if let Some(command) = extract_shell_command_from_text(message) {
+            return Some(format!("delegate:shell:{command}"));
+        }
+    }
+    if delegated_tool_allowed(allowed_tools, DelegatedTool::WebSearchTool) {
+        if let Some(query) = extract_web_search_query_from_text(message) {
+            return Some(format!("delegate:web_search_tool:{query}"));
+        }
+    }
+    if delegated_tool_allowed(allowed_tools, DelegatedTool::WebFetch) {
+        if let Some(url) = extract_web_fetch_url_from_text(message) {
+            return Some(format!("delegate:web_fetch:{url}"));
+        }
+    }
+    None
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn parse_delegated_tool(raw: &str) -> Result<DelegatedTool> {
+    match raw.trim() {
+        "shell" => Ok(DelegatedTool::Shell),
+        "file_read" => Ok(DelegatedTool::FileRead),
+        "file_write" => Ok(DelegatedTool::FileWrite),
+        "file_edit" => Ok(DelegatedTool::FileEdit),
+        "glob_search" => Ok(DelegatedTool::GlobSearch),
+        "content_search" => Ok(DelegatedTool::ContentSearch),
+        "git_operations" => Ok(DelegatedTool::GitOperations),
+        "web_search_tool" | "web_search" => Ok(DelegatedTool::WebSearchTool),
+        "web_fetch" => Ok(DelegatedTool::WebFetch),
+        other => Err(anyhow!("unsupported delegated tool '{other}'")),
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn parse_delegated_tool_allowlist(raw: Option<&str>) -> Result<Vec<DelegatedTool>> {
+    let raw = raw.unwrap_or(DEFAULT_EDGE_DELEGATE_ALLOWED_TOOLS);
+    let mut dedup = std::collections::BTreeSet::new();
+    for item in raw.split(',') {
+        let value = item.trim();
+        if value.is_empty() {
+            continue;
+        }
+        dedup.insert(parse_delegated_tool(value)?);
+    }
+    if dedup.is_empty() {
+        return Err(anyhow!(
+            "{ENV_EDGE_DELEGATE_ALLOWED_TOOLS} must include at least one delegated tool"
+        ));
+    }
+    Ok(dedup.into_iter().collect())
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn parse_edge_delegation_settings<F>(mut get: F) -> Result<Option<EdgeDelegationSettings>>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let enabled =
+        parse_bool(optional(&mut get, ENV_EDGE_DELEGATION_ENABLED).as_deref()).unwrap_or(false);
+    if !enabled {
+        return Ok(None);
+    }
+
+    let endpoint_url = required(&mut get, ENV_EDGE_DELEGATE_ENDPOINT_URL)?;
+    if !endpoint_url.starts_with("http://") && !endpoint_url.starts_with("https://") {
+        return Err(anyhow!(
+            "{ENV_EDGE_DELEGATE_ENDPOINT_URL} must start with http:// or https://"
+        ));
+    }
+    let auth_token = required(&mut get, ENV_EDGE_DELEGATE_AUTH_TOKEN)?;
+    let _validated = zeroclaw_edge::delegate_http::DelegationAuthToken::new(auth_token.as_str())
+        .context("invalid ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN")?;
+    let allowed_tools = parse_delegated_tool_allowlist(
+        optional(&mut get, ENV_EDGE_DELEGATE_ALLOWED_TOOLS).as_deref(),
+    )
+    .context("invalid ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS")?;
+    Ok(Some(EdgeDelegationSettings {
+        endpoint_url: endpoint_url.trim_end_matches('/').to_string(),
+        auth_token,
+        allowed_tools,
     }))
 }
 
@@ -910,10 +1182,18 @@ mod wasm_runtime {
     use super::*;
 
     use async_trait::async_trait;
+    use serde::de::DeserializeOwned;
+    use std::sync::Mutex;
     use worker::{
         console_error, console_log, durable_object, event, wasm_bindgen, Context, DurableObject,
         Env, Fetch, Headers, Method, Request, RequestInit, Response, Result, ScheduleContext,
         ScheduledEvent, State, Stub,
+    };
+    use zeroclaw_core::memory::{Memory, MemoryCategory, MemoryEntry};
+    use zeroclaw_core::tools::ToolResult;
+    use zeroclaw_edge::{
+        run_edge_turn, DelegateExecutor, EdgeRuntime, NativeWorkerRequest, NativeWorkerResponse,
+        PrefixPlanner,
     };
 
     const ENV_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
@@ -933,12 +1213,16 @@ mod wasm_runtime {
     struct ChatRequest {
         message: String,
         model: Option<String>,
+        session_id: Option<String>,
     }
 
     #[derive(Debug, Serialize)]
     struct ChatResponse {
         model: String,
         reply: String,
+        session_id: Option<String>,
+        history_messages: usize,
+        delegated: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1006,6 +1290,185 @@ mod wasm_runtime {
         key: String,
         category: String,
         content: String,
+    }
+
+    #[derive(Debug, Clone)]
+    struct WorkerDelegateExecutor {
+        settings: EdgeDelegationSettings,
+    }
+
+    #[async_trait(?Send)]
+    impl DelegateExecutor for WorkerDelegateExecutor {
+        async fn execute_tool(
+            &self,
+            tool: DelegatedTool,
+            args: serde_json::Value,
+            session_id: Option<&str>,
+        ) -> anyhow::Result<ToolResult> {
+            let request_body = serde_json::to_string(&NativeWorkerRequest {
+                session_id: session_id.map(ToString::to_string),
+                tool,
+                args,
+            })
+            .map_err(|e| anyhow!("failed serializing delegate request body: {e}"))?;
+
+            let mut init = RequestInit::new();
+            init.with_method(Method::Post);
+            let headers = Headers::new();
+            headers
+                .set("Content-Type", "application/json")
+                .map_err(|e| anyhow!("failed setting delegate content-type: {e}"))?;
+            headers
+                .set(
+                    "Authorization",
+                    &format!("Bearer {}", self.settings.auth_token),
+                )
+                .map_err(|e| anyhow!("failed setting delegate auth header: {e}"))?;
+            init.with_headers(headers);
+            init.with_body(Some(request_body.into()));
+
+            let endpoint = format!("{}/delegate/execute", self.settings.endpoint_url);
+            let req = Request::new_with_init(endpoint.as_str(), &init)
+                .map_err(|e| anyhow!("failed building delegate request: {e}"))?;
+            let mut response = Fetch::Request(req)
+                .send()
+                .await
+                .map_err(|e| anyhow!("delegate request failed: {e}"))?;
+            let status = response.status_code();
+            let body = response
+                .text()
+                .await
+                .map_err(|e| anyhow!("failed reading delegate response: {e}"))?;
+
+            let parsed = serde_json::from_str::<NativeWorkerResponse>(body.as_str()).ok();
+            if !(200..=299).contains(&status) {
+                let error = parsed.and_then(|resp| resp.error).unwrap_or_else(|| {
+                    format!("delegate service returned status {status}: {body}")
+                });
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(error),
+                });
+            }
+            let parsed = parsed.ok_or_else(|| {
+                anyhow!("delegate service returned invalid JSON response body: {body}")
+            })?;
+            Ok(ToolResult {
+                success: parsed.success,
+                output: parsed.output,
+                error: parsed.error,
+            })
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct TransientEdgeMemory {
+        entries: Mutex<Vec<MemoryEntry>>,
+    }
+
+    impl TransientEdgeMemory {
+        fn now_timestamp() -> String {
+            worker::Date::now().as_millis().to_string()
+        }
+
+        fn next_id(entries: &[MemoryEntry]) -> String {
+            format!("edge-memory-{}", entries.len() + 1)
+        }
+    }
+
+    #[async_trait]
+    impl Memory for TransientEdgeMemory {
+        fn name(&self) -> &str {
+            "edge-worker-transient"
+        }
+
+        async fn store(
+            &self,
+            key: &str,
+            content: &str,
+            category: MemoryCategory,
+            session_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            let mut entries = self.entries.lock().unwrap();
+            let id = Self::next_id(entries.as_slice());
+            entries.push(MemoryEntry {
+                id,
+                key: key.to_string(),
+                content: content.to_string(),
+                category,
+                timestamp: Self::now_timestamp(),
+                session_id: session_id.map(ToString::to_string),
+                score: None,
+            });
+            Ok(())
+        }
+
+        async fn recall(
+            &self,
+            query: &str,
+            limit: usize,
+            session_id: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            let capped = if limit == 0 { 5 } else { limit };
+            let query = query.trim();
+            let mut entries: Vec<MemoryEntry> = self
+                .entries
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|entry| {
+                    (session_id.is_none() || entry.session_id.as_deref() == session_id)
+                        && (entry.key.contains(query) || entry.content.contains(query))
+                })
+                .cloned()
+                .collect();
+            entries.truncate(capped);
+            Ok(entries)
+        }
+
+        async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+            Ok(self
+                .entries
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|entry| entry.key == key)
+                .cloned())
+        }
+
+        async fn list(
+            &self,
+            category: Option<&MemoryCategory>,
+            session_id: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(self
+                .entries
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|entry| {
+                    (category.is_none() || Some(&entry.category) == category)
+                        && (session_id.is_none() || entry.session_id.as_deref() == session_id)
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn forget(&self, key: &str) -> anyhow::Result<bool> {
+            let mut entries = self.entries.lock().unwrap();
+            let original_len = entries.len();
+            entries.retain(|entry| entry.key != key);
+            Ok(entries.len() < original_len)
+        }
+
+        async fn count(&self) -> anyhow::Result<usize> {
+            Ok(self.entries.lock().unwrap().len())
+        }
+
+        async fn health_check(&self) -> bool {
+            true
+        }
     }
 
     #[durable_object]
@@ -1094,9 +1557,16 @@ mod wasm_runtime {
                         .await?
                         .unwrap_or_default();
                     records.push(append_req.record);
-                    if records.len() > append_req.max_records {
-                        records = records.split_off(records.len() - append_req.max_records);
-                    }
+                    let reference_ms = records
+                        .last()
+                        .map(|record| record.recorded_at_ms)
+                        .unwrap_or_default();
+                    records = apply_canary_audit_retention(
+                        records,
+                        append_req.max_records,
+                        append_req.retention_ms,
+                        reference_ms,
+                    );
                     self.state
                         .storage()
                         .put(CANARY_AUDIT_STORAGE_KEY, &records)
@@ -1119,6 +1589,46 @@ mod wasm_runtime {
                     };
                     records.reverse();
                     Response::from_json(&CanaryAuditRecentResponse { records })
+                }
+                (Method::Post, "/archive") => {
+                    let archive_req: CanaryAuditArchiveRequest = req.json().await.map_err(|e| {
+                        worker::Error::RustError(format!(
+                            "invalid canary audit archive payload: {e}"
+                        ))
+                    })?;
+                    if archive_req.limit == 0 {
+                        return Response::error("limit must be greater than zero", 400);
+                    }
+                    let mut records = self
+                        .state
+                        .storage()
+                        .get::<Vec<CanaryAuditRecord>>(CANARY_AUDIT_STORAGE_KEY)
+                        .await?
+                        .unwrap_or_default();
+                    let selection = canary_audit_archive_selection_indices(
+                        records.as_slice(),
+                        archive_req.limit,
+                        archive_req.before_ms,
+                    );
+                    let exported = selection
+                        .iter()
+                        .map(|idx| records[*idx].clone())
+                        .collect::<Vec<_>>();
+                    let deleted = if archive_req.delete_archived {
+                        records = remove_canary_audit_records_by_indices(records, &selection);
+                        self.state
+                            .storage()
+                            .put(CANARY_AUDIT_STORAGE_KEY, &records)
+                            .await?;
+                        selection.len()
+                    } else {
+                        0
+                    };
+                    Response::from_json(&CanaryAuditArchiveResponse {
+                        records: exported,
+                        deleted,
+                        remaining: records.len(),
+                    })
                 }
                 (Method::Post, "/clear") => {
                     self.state
@@ -1258,11 +1768,13 @@ mod wasm_runtime {
         env: &Env,
         record: CanaryAuditRecord,
         max_records: usize,
+        retention_ms: u64,
     ) -> Result<()> {
         let stub = canary_audit_stub(env).await?;
         let body = serde_json::to_string(&CanaryAuditAppendRequest {
             record,
             max_records,
+            retention_ms,
         })
         .map_err(|e| {
             worker::Error::RustError(format!("failed serializing canary audit append body: {e}"))
@@ -1301,6 +1813,32 @@ mod wasm_runtime {
         let payload: CanaryAuditRecentResponse =
             parse_required_json_response(resp, "canary audit recent fetch").await?;
         Ok(payload.records)
+    }
+
+    async fn archive_canary_audit_records(
+        env: &Env,
+        request: CanaryAuditArchiveRequest,
+    ) -> Result<CanaryAuditArchiveResponse> {
+        let stub = canary_audit_stub(env).await?;
+        let body = serde_json::to_string(&request).map_err(|e| {
+            worker::Error::RustError(format!("failed serializing canary audit archive body: {e}"))
+        })?;
+        let mut init = RequestInit::new();
+        init.with_method(Method::Post);
+        let headers = Headers::new();
+        headers
+            .set("Content-Type", "application/json")
+            .map_err(|e| worker::Error::RustError(format!("failed setting content-type: {e}")))?;
+        init.with_headers(headers);
+        init.with_body(Some(body.into()));
+        let req = Request::new_with_init(&canary_audit_do_url("/archive"), &init).map_err(|e| {
+            worker::Error::RustError(format!("failed creating canary audit archive request: {e}"))
+        })?;
+        let resp = stub
+            .fetch_with_request(req)
+            .await
+            .map_err(|e| worker::Error::RustError(format!("canary audit archive failed: {e}")))?;
+        parse_required_json_response(resp, "canary audit archive").await
     }
 
     async fn clear_canary_audit_records(env: &Env) -> Result<()> {
@@ -1488,6 +2026,66 @@ mod wasm_runtime {
             }
         }
         Ok(())
+    }
+
+    async fn store_long_term_delegation_audit(
+        settings: &LongTermMemorySettings,
+        session_id: Option<&str>,
+        user_message: &str,
+        delegate_reply: &str,
+    ) -> Result<()> {
+        let key = turn_memory_key("delegate_audit", session_id);
+        let content = format!(
+            "delegated_turn user_message={} delegate_reply={}",
+            truncate_chars(user_message.trim(), 280),
+            truncate_chars(delegate_reply.trim(), 560)
+        );
+        let payload = serde_json::to_string(&MemoryStoreRequest {
+            key: key.as_str(),
+            content: content.as_str(),
+            category: "conversation",
+            session_id,
+        })
+        .map_err(|e| {
+            worker::Error::RustError(format!(
+                "failed serializing delegated audit memory payload: {e}"
+            ))
+        })?;
+        let mut response =
+            send_memory_request(settings, Method::Post, "/v1/memory/store", Some(payload)).await?;
+        let status = response.status_code();
+        if !(200..=299).contains(&status) {
+            let body = response.text().await.unwrap_or_else(|_| String::new());
+            return Err(worker::Error::RustError(format!(
+                "delegated audit memory store failed with status {status}: {body}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn run_chat_via_edge_runtime(
+        delegation_settings: &EdgeDelegationSettings,
+        session_id: Option<String>,
+        message: &str,
+    ) -> Result<zeroclaw_edge::EdgeResponse> {
+        let runtime = EdgeRuntime::with_allowed_tools(
+            Arc::new(TransientEdgeMemory::default()),
+            Arc::new(WorkerDelegateExecutor {
+                settings: delegation_settings.clone(),
+            }),
+            delegation_settings.allowed_tools.clone(),
+        );
+        let planner = PrefixPlanner;
+        let result = run_edge_turn(&runtime, &planner, session_id, message)
+            .await
+            .map_err(|e| worker::Error::RustError(format!("edge runtime turn failed: {e:#}")))?;
+        if !result.success {
+            let message = result
+                .error
+                .unwrap_or_else(|| "delegated edge runtime request failed".to_string());
+            return Err(worker::Error::RustError(message));
+        }
+        Ok(result)
     }
 
     fn parse_drill_path(path: &str, prefix: &str) -> Result<Option<CanaryDrillScenario>> {
@@ -1841,6 +2439,13 @@ mod wasm_runtime {
                 .as_deref(),
         )
         .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let audit_retention_ms = parse_canary_audit_retention_ms(
+            env.var(ENV_CANARY_AUDIT_RETENTION_MS)
+                .ok()
+                .map(|v| v.to_string())
+                .as_deref(),
+        )
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
         let payload_for_audit = payload.clone();
         let event = CloudflareCronEvent::from_payload(payload)
             .map_err(|e| worker::Error::RustError(e.to_string()))?;
@@ -1885,7 +2490,8 @@ mod wasm_runtime {
             &summary,
             worker::Date::now().as_millis(),
         );
-        append_canary_audit_record(env, audit_record, audit_max_records).await?;
+        append_canary_audit_record(env, audit_record, audit_max_records, audit_retention_ms)
+            .await?;
         Ok(summary)
     }
 
@@ -1909,6 +2515,114 @@ mod wasm_runtime {
         if chat_req.message.trim().is_empty() {
             return Response::error("message must not be empty", 400);
         }
+        let session_id = normalize_session_id(chat_req.session_id.as_deref())
+            .map_err(|e| worker::Error::RustError(format!("invalid session_id: {e}")))?;
+        let history_limit = parse_chat_history_limit(
+            env.var(ENV_CHAT_HISTORY_MESSAGES)
+                .ok()
+                .map(|v| v.to_string())
+                .as_deref(),
+        )
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let long_term_memory_settings =
+            parse_long_term_memory_settings(|key| env.var(key).ok().map(|v| v.to_string()))
+                .map_err(|e| worker::Error::RustError(format!("invalid memory settings: {e}")))?;
+        let delegation_settings =
+            parse_edge_delegation_settings(|key| env.var(key).ok().map(|v| v.to_string()))
+                .map_err(|e| {
+                    worker::Error::RustError(format!("invalid edge delegation settings: {e}"))
+                })?;
+
+        if let Some(delegation_settings) = delegation_settings.as_ref() {
+            if let Some(edge_runtime_message) = route_message_to_edge_runtime(
+                chat_req.message.as_str(),
+                delegation_settings.allowed_tools.as_slice(),
+            ) {
+                let runtime_result = match run_chat_via_edge_runtime(
+                    delegation_settings,
+                    session_id.clone(),
+                    edge_runtime_message.as_str(),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(err) => {
+                        let msg = err.to_string();
+                        let status = if msg.contains("unsupported edge planner")
+                            || msg.contains("must not be empty")
+                            || msg.contains("not allowed")
+                            || msg.contains("unsupported delegated tool")
+                        {
+                            400
+                        } else {
+                            502
+                        };
+                        return Response::error(
+                            format!("delegated edge runtime failed: {msg}"),
+                            status,
+                        );
+                    }
+                };
+                let reply = runtime_result.output.clone().unwrap_or_default();
+                let history_messages = if let Some(session_id) = session_id.as_deref() {
+                    let reply_for_history = if reply.trim().is_empty() {
+                        "(delegated command completed with no output)".to_string()
+                    } else {
+                        reply.clone()
+                    };
+                    let user_message = ChatMessage::new(ChatRole::User, chat_req.message.clone())
+                        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+                    let assistant_message =
+                        ChatMessage::new(ChatRole::Assistant, reply_for_history)
+                            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+                    let persisted = append_session_history(
+                        env,
+                        session_id,
+                        vec![user_message, assistant_message],
+                        history_limit,
+                    )
+                    .await?;
+                    persisted.len()
+                } else {
+                    0
+                };
+                if let Some(settings) = long_term_memory_settings.as_ref() {
+                    if let Err(err) = store_long_term_turn(
+                        settings,
+                        session_id.as_deref(),
+                        &chat_req.message,
+                        &reply,
+                    )
+                    .await
+                    {
+                        console_error!("long-term memory store failed: {}", err);
+                    }
+                    if runtime_result.delegated {
+                        if let Err(err) = store_long_term_delegation_audit(
+                            settings,
+                            session_id.as_deref(),
+                            &chat_req.message,
+                            &reply,
+                        )
+                        .await
+                        {
+                            console_error!("delegated audit memory store failed: {}", err);
+                        }
+                    }
+                }
+                return Response::from_json(&ChatResponse {
+                    model: if runtime_result.delegated {
+                        "native-delegate".to_string()
+                    } else {
+                        "edge-runtime".to_string()
+                    },
+                    reply,
+                    session_id,
+                    history_messages,
+                    delegated: runtime_result.delegated,
+                });
+            }
+        }
 
         let api_key = env
             .var(ENV_OPENROUTER_API_KEY)
@@ -1924,9 +2638,6 @@ mod wasm_runtime {
         } else {
             Vec::new()
         };
-        let long_term_memory_settings =
-            parse_long_term_memory_settings(|key| env.var(key).ok().map(|v| v.to_string()))
-                .map_err(|e| worker::Error::RustError(format!("invalid memory settings: {e}")))?;
         let long_term_memory = if let Some(settings) = long_term_memory_settings.as_ref() {
             match fetch_long_term_memory(settings, &chat_req.message).await {
                 Ok(entries) => entries,
@@ -1945,10 +2656,8 @@ mod wasm_runtime {
 
         let payload = serde_json::json!({
             "model": model,
-            "messages": [
-                {"role": "system", "content": "You are ZeroClaw Edge demo. Be concise and action-oriented."},
-                {"role": "user", "content": chat_req.message}
-            ]
+            "messages": openrouter_messages,
+            "temperature": 0
         });
 
         let mut init = RequestInit::new();
@@ -2031,6 +2740,7 @@ mod wasm_runtime {
             reply,
             session_id,
             history_messages,
+            delegated: false,
         })
     }
 
@@ -2338,6 +3048,7 @@ mod wasm_runtime {
         match (req.method(), req.path().as_str()) {
             (Method::Get, "/healthz") => Response::ok("ok"),
             (Method::Post, "/chat") => run_chat(req, &env).await,
+            (Method::Post, "/chat/reset") => run_chat_reset(req, &env).await,
             (Method::Post, "/tick") => {
                 let payload = CloudflareCronEventPayload {
                     cron: "manual".to_string(),
@@ -2491,6 +3202,128 @@ mod tests {
     }
 
     #[test]
+    fn parse_edge_delegation_settings_defaults_to_disabled() {
+        let settings = parse_edge_delegation_settings(|_key| None).unwrap();
+        assert!(settings.is_none());
+    }
+
+    #[test]
+    fn parse_edge_delegation_settings_requires_endpoint_and_token_when_enabled() {
+        let mut env = HashMap::<String, String>::new();
+        env.insert(ENV_EDGE_DELEGATION_ENABLED.to_string(), "true".to_string());
+        let err = parse_edge_delegation_settings(|key| env.get(key).cloned())
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(err.contains(ENV_EDGE_DELEGATE_ENDPOINT_URL));
+
+        env.insert(
+            ENV_EDGE_DELEGATE_ENDPOINT_URL.to_string(),
+            "https://delegate.example".to_string(),
+        );
+        let err = parse_edge_delegation_settings(|key| env.get(key).cloned())
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(err.contains(ENV_EDGE_DELEGATE_AUTH_TOKEN));
+    }
+
+    #[test]
+    fn parse_edge_delegation_settings_parses_allowlist_and_deduplicates() {
+        let mut env = HashMap::<String, String>::new();
+        env.insert(ENV_EDGE_DELEGATION_ENABLED.to_string(), "true".to_string());
+        env.insert(
+            ENV_EDGE_DELEGATE_ENDPOINT_URL.to_string(),
+            "https://delegate.example/".to_string(),
+        );
+        env.insert(
+            ENV_EDGE_DELEGATE_AUTH_TOKEN.to_string(),
+            "token-123".to_string(),
+        );
+        env.insert(
+            ENV_EDGE_DELEGATE_ALLOWED_TOOLS.to_string(),
+            "shell,file_read,shell".to_string(),
+        );
+        let settings = parse_edge_delegation_settings(|key| env.get(key).cloned())
+            .unwrap()
+            .unwrap();
+        assert_eq!(settings.endpoint_url, "https://delegate.example");
+        assert_eq!(settings.auth_token, "token-123");
+        assert_eq!(
+            settings.allowed_tools,
+            vec![DelegatedTool::Shell, DelegatedTool::FileRead]
+        );
+    }
+
+    #[test]
+    fn parse_edge_delegation_settings_rejects_unknown_allowlist_value() {
+        let mut env = HashMap::<String, String>::new();
+        env.insert(ENV_EDGE_DELEGATION_ENABLED.to_string(), "true".to_string());
+        env.insert(
+            ENV_EDGE_DELEGATE_ENDPOINT_URL.to_string(),
+            "https://delegate.example".to_string(),
+        );
+        env.insert(
+            ENV_EDGE_DELEGATE_AUTH_TOKEN.to_string(),
+            "token-123".to_string(),
+        );
+        env.insert(
+            ENV_EDGE_DELEGATE_ALLOWED_TOOLS.to_string(),
+            "shell,unknown".to_string(),
+        );
+        let err = parse_edge_delegation_settings(|key| env.get(key).cloned())
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(err.contains("invalid"));
+    }
+
+    #[test]
+    fn edge_runtime_prefixed_message_detects_supported_prefixes() {
+        assert!(is_edge_runtime_prefixed_message("delegate:shell:ls"));
+        assert!(is_edge_runtime_prefixed_message(" memory:recall:rust"));
+        assert!(!is_edge_runtime_prefixed_message(
+            "summarize wasm advantages"
+        ));
+    }
+
+    #[test]
+    fn route_message_to_edge_runtime_maps_plain_language_to_tools() {
+        let allow_all = vec![
+            DelegatedTool::Shell,
+            DelegatedTool::WebSearchTool,
+            DelegatedTool::WebFetch,
+        ];
+        assert_eq!(
+            route_message_to_edge_runtime("Run the ls function", &allow_all).unwrap(),
+            "delegate:shell:ls"
+        );
+        assert_eq!(
+            route_message_to_edge_runtime("Find me some recent news online", &allow_all).unwrap(),
+            "delegate:web_search_tool:Find me some recent news online"
+        );
+        assert_eq!(
+            route_message_to_edge_runtime("Search and find me some news today?", &allow_all)
+                .unwrap(),
+            "delegate:web_search_tool:Search and find me some news today"
+        );
+        assert_eq!(
+            route_message_to_edge_runtime("fetch https://example.com", &allow_all).unwrap(),
+            "delegate:web_fetch:https://example.com"
+        );
+    }
+
+    #[test]
+    fn route_message_to_edge_runtime_obeys_allowlist() {
+        let shell_only = vec![DelegatedTool::Shell];
+        assert!(route_message_to_edge_runtime("search online for wasm", &shell_only).is_none());
+        assert_eq!(
+            route_message_to_edge_runtime("run pwd", &shell_only).unwrap(),
+            "delegate:shell:pwd"
+        );
+    }
+
+    #[test]
     fn build_openrouter_messages_includes_long_term_memory_context() {
         let history = vec![ChatMessage::new(ChatRole::User, "hello").unwrap()];
         let memory = vec![
@@ -2530,6 +3363,124 @@ mod tests {
             MAX_CANARY_AUDIT_MAX_RECORDS
         );
         assert!(parse_canary_audit_max_records(Some("0")).is_err());
+    }
+
+    #[test]
+    fn parse_canary_audit_retention_defaults_caps_and_rejects_zero() {
+        assert_eq!(
+            parse_canary_audit_retention_ms(None).unwrap(),
+            DEFAULT_CANARY_AUDIT_RETENTION_MS
+        );
+        assert_eq!(
+            parse_canary_audit_retention_ms(Some("999999999999")).unwrap(),
+            MAX_CANARY_AUDIT_RETENTION_MS
+        );
+        assert!(parse_canary_audit_retention_ms(Some("0")).is_err());
+    }
+
+    #[test]
+    fn apply_canary_audit_retention_prunes_by_time_and_count() {
+        let records = vec![
+            CanaryAuditRecord {
+                recorded_at_ms: 100,
+                cron: "a".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Hold".to_string(),
+                applied_canary_percent: None,
+                total_requests: 1,
+                failed_requests: 0,
+                p95_latency_ms: 1,
+            },
+            CanaryAuditRecord {
+                recorded_at_ms: 200,
+                cron: "b".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Promote".to_string(),
+                applied_canary_percent: Some(10),
+                total_requests: 1,
+                failed_requests: 0,
+                p95_latency_ms: 1,
+            },
+            CanaryAuditRecord {
+                recorded_at_ms: 300,
+                cron: "c".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Rollback".to_string(),
+                applied_canary_percent: Some(0),
+                total_requests: 1,
+                failed_requests: 1,
+                p95_latency_ms: 1,
+            },
+        ];
+        let retained = apply_canary_audit_retention(records, 2, 120, 300);
+        let got: Vec<u64> = retained
+            .iter()
+            .map(|record| record.recorded_at_ms)
+            .collect();
+        assert_eq!(got, vec![200, 300]);
+    }
+
+    #[test]
+    fn canary_audit_archive_selection_and_removal_are_deterministic() {
+        let records = vec![
+            CanaryAuditRecord {
+                recorded_at_ms: 100,
+                cron: "a".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Hold".to_string(),
+                applied_canary_percent: None,
+                total_requests: 1,
+                failed_requests: 0,
+                p95_latency_ms: 1,
+            },
+            CanaryAuditRecord {
+                recorded_at_ms: 200,
+                cron: "b".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Promote".to_string(),
+                applied_canary_percent: Some(10),
+                total_requests: 1,
+                failed_requests: 0,
+                p95_latency_ms: 1,
+            },
+            CanaryAuditRecord {
+                recorded_at_ms: 300,
+                cron: "c".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Rollback".to_string(),
+                applied_canary_percent: Some(0),
+                total_requests: 1,
+                failed_requests: 1,
+                p95_latency_ms: 1,
+            },
+        ];
+        let selection = canary_audit_archive_selection_indices(records.as_slice(), 2, Some(250));
+        assert_eq!(selection, vec![0, 1]);
+
+        let remaining = remove_canary_audit_records_by_indices(records, &selection);
+        let got: Vec<u64> = remaining
+            .iter()
+            .map(|record| record.recorded_at_ms)
+            .collect();
+        assert_eq!(got, vec![300]);
     }
 
     #[test]

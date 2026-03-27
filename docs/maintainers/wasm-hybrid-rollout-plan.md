@@ -266,29 +266,33 @@ Target demo to close this track:
 - a request that requires filesystem/shell work is routed from Worker to native delegate service
 - both paths are observable and reproducible against a deployed Cloudflare URL
 
-1. Wire edge runtime delegation path into deployed Worker `/chat`
-   - current `/chat` path is OpenRouter + memory only; it does not execute delegated tool calls
-   - integrate `zeroclaw-edge` runtime flow (`EdgeRuntime` + planner/delegate execution) into Worker chat handling
-   - keep safe fallback behavior for non-delegated requests
-2. Add native delegate service deployment target for real filesystem/shell operations
-   - expose authenticated `/delegate/execute` boundary compatible with `NativeDelegateHttpClient`
-   - enforce allowlist and auth-token invariants for delegated tools
-   - define deployment shape for demo environment (hosted service reachable from Worker)
-3. Add Worker configuration surface for delegation wiring
-   - endpoint URL + auth token + delegated tool allowlist
-   - default-off behavior when delegation config is absent
-   - explicit validation errors for malformed config
-4. Add end-to-end deployed demo script and runbook
-   - scenario A: chat-only turn that remains in Worker
-   - scenario B: delegated filesystem/shell turn that executes via native worker
-   - collect evidence artifacts (request/response + delegation audit record + expected side effect)
-5. Add deterministic integration coverage for Worker+delegate wiring
-   - local integration test path proving `/chat` can trigger delegated execution through HTTP boundary
-   - negative-path coverage: unauthorized token, disallowed tool, native delegate failure
-6. Define rollout and rollback gates for delegated path enablement
-   - staged enablement (off -> dry-run -> limited allowlist -> demo scope)
-   - rollback switch to disable delegation while preserving chat-only Worker behavior
-   - operator checks for latency/error regressions on delegated turns
+1. `status: complete (stacked PR #36)` Wire edge runtime delegation path into Worker `/chat`
+   - `/chat` now routes `delegate:*`/`memory:*` prefix turns through `EdgeRuntime` + `PrefixPlanner`
+   - non-prefixed chat keeps existing OpenRouter flow as fallback
+   - response payload includes `delegated` flag for runtime observability
+2. `status: complete (stacked PR #36)` Add native delegate service deployment target
+   - new crate: `crates/zeroclaw-edge-native-delegate`
+   - exposes authenticated `POST /delegate/execute` via typed `handle_native_delegate_http_request` boundary
+   - enforces allowlist + bearer token invariants before shell execution
+3. `status: complete (stacked PR #36)` Add Worker delegation config surface
+   - `ZEROCLAW_EDGE_DELEGATION_ENABLED`
+   - `ZEROCLAW_EDGE_DELEGATE_ENDPOINT_URL`
+   - `ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN`
+   - `ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS`
+   - default-off when disabled/absent, explicit validation errors on malformed values
+4. `status: complete (stacked PR #36)` Add end-to-end local+deployed demo script/runbook
+   - new script: `./scripts/edge_worker_hybrid_demo.sh`
+   - scenario A (worker-only path): `memory:store:*` -> `delegated=false`
+   - scenario B (native delegated path): `delegate:shell:*` -> `delegated=true`
+   - evidence artifacts written under `artifacts/edge-hybrid-demo-*`
+5. `status: complete (stacked PR #36)` Add deterministic coverage for Worker+delegate wiring
+   - new worker config parsing tests cover enablement, required fields, allowlist validation, prefix routing detection
+   - existing `zeroclaw-edge` delegation HTTP tests continue to cover unauthorized/disallowed/handler-failure paths
+   - local no-mock integration path validated by `scripts/edge_worker_hybrid_demo.sh`
+6. `status: complete (stacked PR #36)` Define rollout + rollback gates
+   - staged enablement controlled by `ZEROCLAW_EDGE_DELEGATION_ENABLED` + allowlist narrowing
+   - rollback switch documented: redeploy with `ZEROCLAW_EDGE_DELEGATION_ENABLED=false`
+   - operator verification steps documented in `docs/maintainers/cloudflare-canary-playbook.md`
 
 ## Notes
 
