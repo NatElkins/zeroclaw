@@ -115,6 +115,21 @@ ZEROCLAW_EDGE_DEMO_SESSION_ID=my-team-room ./scripts/edge_worker_chat_demo.sh "r
 ZEROCLAW_EDGE_DEMO_SESSION_ID=my-team-room ZEROCLAW_EDGE_DEMO_RESET_SESSION=0 ./scripts/edge_worker_chat_demo.sh "what token did i ask you to remember?"
 ```
 
+To enable shared long-term memory (cross-session, TigerFS-like HTTP service), set:
+
+```bash
+ZEROCLAW_LONG_TERM_MEMORY_BASE_URL="https://memory.example.com" \
+ZEROCLAW_LONG_TERM_MEMORY_AUTH_TOKEN="<optional-bearer-token>" \
+ZEROCLAW_LONG_TERM_MEMORY_RECALL_LIMIT=6 \
+ZEROCLAW_EDGE_DEMO_SESSION_ID=my-team-room \
+./scripts/edge_worker_chat_demo.sh "remember: team prefers rust for edge runtimes"
+```
+
+When configured, `/chat` keeps Durable Object history as short-term context and also:
+
+1. recalls relevant entries from `/v1/memory/recall` before model invocation
+2. stores user/assistant turn records to `/v1/memory/store` after reply generation
+
 To point the same CLI at a deployed Worker instead of local `wrangler dev`:
 
 ```bash
@@ -169,5 +184,5 @@ Persist the JSON response in incident/audit notes as rollback drill evidence.
 
 ## Intended Next Step
 
-1. Introduce shared long-term memory HTTP backend for cross-session edge/native state.
-2. Persist canary decision events to durable audit storage for postmortems.
+1. Persist canary decision events to durable audit storage for postmortems.
+2. Add remote drill evidence auto-export into a signed incident artifact bundle.
