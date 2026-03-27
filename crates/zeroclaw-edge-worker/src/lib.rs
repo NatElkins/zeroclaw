@@ -67,6 +67,8 @@ const ENV_CANARY_DRILL_TOKEN: &str = "ZEROCLAW_CANARY_DRILL_TOKEN";
 #[cfg(target_arch = "wasm32")]
 const ENV_CANARY_AUDIT_MAX_RECORDS: &str = "ZEROCLAW_CANARY_AUDIT_MAX_RECORDS";
 #[cfg(target_arch = "wasm32")]
+const ENV_CANARY_AUDIT_RETENTION_MS: &str = "ZEROCLAW_CANARY_AUDIT_RETENTION_MS";
+#[cfg(target_arch = "wasm32")]
 const ENV_CANARY_ARTIFACT_SIGNING_KEY: &str = "ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY";
 #[cfg(target_arch = "wasm32")]
 const ENV_CANARY_ARTIFACT_SIGNING_KEY_ID: &str = "ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY_ID";
@@ -78,6 +80,10 @@ const MAX_CANARY_AUDIT_MAX_RECORDS: usize = 5_000;
 const DEFAULT_CANARY_AUDIT_RECENT_LIMIT: usize = 20;
 #[cfg(any(test, target_arch = "wasm32"))]
 const MAX_CANARY_AUDIT_RECENT_LIMIT: usize = 200;
+#[cfg(any(test, target_arch = "wasm32"))]
+const DEFAULT_CANARY_AUDIT_RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+#[cfg(any(test, target_arch = "wasm32"))]
+const MAX_CANARY_AUDIT_RETENTION_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,6 +305,23 @@ struct CanaryAuditRecentResponse {
 struct CanaryAuditAppendRequest {
     record: CanaryAuditRecord,
     max_records: usize,
+    retention_ms: u64,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryAuditArchiveRequest {
+    limit: usize,
+    before_ms: Option<u64>,
+    delete_archived: bool,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryAuditArchiveResponse {
+    records: Vec<CanaryAuditRecord>,
+    deleted: usize,
+    remaining: usize,
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -359,6 +382,23 @@ fn parse_canary_audit_recent_limit(raw: Option<&str>) -> Result<usize> {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+fn parse_canary_audit_retention_ms(raw: Option<&str>) -> Result<u64> {
+    let parsed = raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::parse::<u64>)
+        .transpose()
+        .context("invalid ZEROCLAW_CANARY_AUDIT_RETENTION_MS")?
+        .unwrap_or(DEFAULT_CANARY_AUDIT_RETENTION_MS);
+    if parsed == 0 {
+        return Err(anyhow!(
+            "ZEROCLAW_CANARY_AUDIT_RETENTION_MS must be greater than zero"
+        ));
+    }
+    Ok(parsed.min(MAX_CANARY_AUDIT_RETENTION_MS))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 fn canary_audit_recent_limit_from_url(url: &str) -> Result<usize> {
     let query = url.split_once('?').map(|(_, query)| query);
     let Some(query) = query else {
@@ -369,6 +409,56 @@ fn canary_audit_recent_limit_from_url(url: &str) -> Result<usize> {
         (key == "limit").then_some(value)
     });
     parse_canary_audit_recent_limit(limit)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn apply_canary_audit_retention(
+    mut records: Vec<CanaryAuditRecord>,
+    max_records: usize,
+    retention_ms: u64,
+    reference_ms: u64,
+) -> Vec<CanaryAuditRecord> {
+    let min_recorded_at = reference_ms.saturating_sub(retention_ms);
+    records.retain(|record| record.recorded_at_ms >= min_recorded_at);
+    if records.len() > max_records {
+        records = records.split_off(records.len() - max_records);
+    }
+    records
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn canary_audit_archive_selection_indices(
+    records: &[CanaryAuditRecord],
+    limit: usize,
+    before_ms: Option<u64>,
+) -> Vec<usize> {
+    let cutoff = before_ms.unwrap_or(u64::MAX);
+    records
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, record)| (record.recorded_at_ms <= cutoff).then_some(idx))
+        .take(limit)
+        .collect()
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn remove_canary_audit_records_by_indices(
+    records: Vec<CanaryAuditRecord>,
+    indices: &[usize],
+) -> Vec<CanaryAuditRecord> {
+    if indices.is_empty() {
+        return records;
+    }
+    let mut removed_cursor = 0usize;
+    let mut kept = Vec::with_capacity(records.len().saturating_sub(indices.len()));
+    for (idx, record) in records.into_iter().enumerate() {
+        if removed_cursor < indices.len() && indices[removed_cursor] == idx {
+            removed_cursor += 1;
+            continue;
+        }
+        kept.push(record);
+    }
+    kept
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -958,9 +1048,16 @@ mod wasm_runtime {
                         .await?
                         .unwrap_or_default();
                     records.push(append_req.record);
-                    if records.len() > append_req.max_records {
-                        records = records.split_off(records.len() - append_req.max_records);
-                    }
+                    let reference_ms = records
+                        .last()
+                        .map(|record| record.recorded_at_ms)
+                        .unwrap_or_default();
+                    records = apply_canary_audit_retention(
+                        records,
+                        append_req.max_records,
+                        append_req.retention_ms,
+                        reference_ms,
+                    );
                     self.state
                         .storage()
                         .put(CANARY_AUDIT_STORAGE_KEY, &records)
@@ -983,6 +1080,46 @@ mod wasm_runtime {
                     };
                     records.reverse();
                     Response::from_json(&CanaryAuditRecentResponse { records })
+                }
+                (Method::Post, "/archive") => {
+                    let archive_req: CanaryAuditArchiveRequest = req.json().await.map_err(|e| {
+                        worker::Error::RustError(format!(
+                            "invalid canary audit archive payload: {e}"
+                        ))
+                    })?;
+                    if archive_req.limit == 0 {
+                        return Response::error("limit must be greater than zero", 400);
+                    }
+                    let mut records = self
+                        .state
+                        .storage()
+                        .get::<Vec<CanaryAuditRecord>>(CANARY_AUDIT_STORAGE_KEY)
+                        .await?
+                        .unwrap_or_default();
+                    let selection = canary_audit_archive_selection_indices(
+                        records.as_slice(),
+                        archive_req.limit,
+                        archive_req.before_ms,
+                    );
+                    let exported = selection
+                        .iter()
+                        .map(|idx| records[*idx].clone())
+                        .collect::<Vec<_>>();
+                    let deleted = if archive_req.delete_archived {
+                        records = remove_canary_audit_records_by_indices(records, &selection);
+                        self.state
+                            .storage()
+                            .put(CANARY_AUDIT_STORAGE_KEY, &records)
+                            .await?;
+                        selection.len()
+                    } else {
+                        0
+                    };
+                    Response::from_json(&CanaryAuditArchiveResponse {
+                        records: exported,
+                        deleted,
+                        remaining: records.len(),
+                    })
                 }
                 (Method::Post, "/clear") => {
                     self.state
@@ -1122,11 +1259,13 @@ mod wasm_runtime {
         env: &Env,
         record: CanaryAuditRecord,
         max_records: usize,
+        retention_ms: u64,
     ) -> Result<()> {
         let stub = canary_audit_stub(env).await?;
         let body = serde_json::to_string(&CanaryAuditAppendRequest {
             record,
             max_records,
+            retention_ms,
         })
         .map_err(|e| {
             worker::Error::RustError(format!("failed serializing canary audit append body: {e}"))
@@ -1165,6 +1304,32 @@ mod wasm_runtime {
         let payload: CanaryAuditRecentResponse =
             parse_required_json_response(resp, "canary audit recent fetch").await?;
         Ok(payload.records)
+    }
+
+    async fn archive_canary_audit_records(
+        env: &Env,
+        request: CanaryAuditArchiveRequest,
+    ) -> Result<CanaryAuditArchiveResponse> {
+        let stub = canary_audit_stub(env).await?;
+        let body = serde_json::to_string(&request).map_err(|e| {
+            worker::Error::RustError(format!("failed serializing canary audit archive body: {e}"))
+        })?;
+        let mut init = RequestInit::new();
+        init.with_method(Method::Post);
+        let headers = Headers::new();
+        headers
+            .set("Content-Type", "application/json")
+            .map_err(|e| worker::Error::RustError(format!("failed setting content-type: {e}")))?;
+        init.with_headers(headers);
+        init.with_body(Some(body.into()));
+        let req = Request::new_with_init(&canary_audit_do_url("/archive"), &init).map_err(|e| {
+            worker::Error::RustError(format!("failed creating canary audit archive request: {e}"))
+        })?;
+        let resp = stub
+            .fetch_with_request(req)
+            .await
+            .map_err(|e| worker::Error::RustError(format!("canary audit archive failed: {e}")))?;
+        parse_required_json_response(resp, "canary audit archive").await
     }
 
     async fn clear_canary_audit_records(env: &Env) -> Result<()> {
@@ -1655,6 +1820,13 @@ mod wasm_runtime {
                 .as_deref(),
         )
         .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let audit_retention_ms = parse_canary_audit_retention_ms(
+            env.var(ENV_CANARY_AUDIT_RETENTION_MS)
+                .ok()
+                .map(|v| v.to_string())
+                .as_deref(),
+        )
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
         let payload_for_audit = payload.clone();
         let event = CloudflareCronEvent::from_payload(payload)
             .map_err(|e| worker::Error::RustError(e.to_string()))?;
@@ -1699,7 +1871,8 @@ mod wasm_runtime {
             &summary,
             worker::Date::now().as_millis(),
         );
-        append_canary_audit_record(env, audit_record, audit_max_records).await?;
+        append_canary_audit_record(env, audit_record, audit_max_records, audit_retention_ms)
+            .await?;
         Ok(summary)
     }
 
@@ -2005,6 +2178,25 @@ mod wasm_runtime {
         Response::ok("ok")
     }
 
+    async fn run_canary_audit_archive(mut req: Request, env: &Env) -> Result<Response> {
+        if let Err(err) = authorize_admin_request(&req, env) {
+            let msg = err.to_string();
+            if msg.contains("unauthorized") {
+                return Response::error(msg, 401);
+            }
+            return Err(err);
+        }
+        let mut archive_req: CanaryAuditArchiveRequest = req
+            .json()
+            .await
+            .map_err(|e| worker::Error::RustError(format!("invalid archive payload: {e}")))?;
+        let requested_limit = archive_req.limit.to_string();
+        archive_req.limit = parse_canary_audit_recent_limit(Some(requested_limit.as_str()))
+            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let response = archive_canary_audit_records(env, archive_req).await?;
+        Response::from_json(&response)
+    }
+
     #[event(fetch)]
     pub async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         if req.method() == Method::Get && req.path().starts_with("/canary/drill/metrics/") {
@@ -2035,6 +2227,12 @@ mod wasm_runtime {
             return match run_canary_audit_clear(req, &env).await {
                 Ok(resp) => Ok(resp),
                 Err(err) => Response::error(format!("canary audit clear failed: {err}"), 500),
+            };
+        }
+        if req.method() == Method::Post && req.path() == "/canary/audit/archive" {
+            return match run_canary_audit_archive(req, &env).await {
+                Ok(resp) => Ok(resp),
+                Err(err) => Response::error(format!("canary audit archive failed: {err}"), 500),
             };
         }
 
@@ -2233,6 +2431,124 @@ mod tests {
             MAX_CANARY_AUDIT_MAX_RECORDS
         );
         assert!(parse_canary_audit_max_records(Some("0")).is_err());
+    }
+
+    #[test]
+    fn parse_canary_audit_retention_defaults_caps_and_rejects_zero() {
+        assert_eq!(
+            parse_canary_audit_retention_ms(None).unwrap(),
+            DEFAULT_CANARY_AUDIT_RETENTION_MS
+        );
+        assert_eq!(
+            parse_canary_audit_retention_ms(Some("999999999999")).unwrap(),
+            MAX_CANARY_AUDIT_RETENTION_MS
+        );
+        assert!(parse_canary_audit_retention_ms(Some("0")).is_err());
+    }
+
+    #[test]
+    fn apply_canary_audit_retention_prunes_by_time_and_count() {
+        let records = vec![
+            CanaryAuditRecord {
+                recorded_at_ms: 100,
+                cron: "a".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Hold".to_string(),
+                applied_canary_percent: None,
+                total_requests: 1,
+                failed_requests: 0,
+                p95_latency_ms: 1,
+            },
+            CanaryAuditRecord {
+                recorded_at_ms: 200,
+                cron: "b".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Promote".to_string(),
+                applied_canary_percent: Some(10),
+                total_requests: 1,
+                failed_requests: 0,
+                p95_latency_ms: 1,
+            },
+            CanaryAuditRecord {
+                recorded_at_ms: 300,
+                cron: "c".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Rollback".to_string(),
+                applied_canary_percent: Some(0),
+                total_requests: 1,
+                failed_requests: 1,
+                p95_latency_ms: 1,
+            },
+        ];
+        let retained = apply_canary_audit_retention(records, 2, 120, 300);
+        let got: Vec<u64> = retained
+            .iter()
+            .map(|record| record.recorded_at_ms)
+            .collect();
+        assert_eq!(got, vec![200, 300]);
+    }
+
+    #[test]
+    fn canary_audit_archive_selection_and_removal_are_deterministic() {
+        let records = vec![
+            CanaryAuditRecord {
+                recorded_at_ms: 100,
+                cron: "a".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Hold".to_string(),
+                applied_canary_percent: None,
+                total_requests: 1,
+                failed_requests: 0,
+                p95_latency_ms: 1,
+            },
+            CanaryAuditRecord {
+                recorded_at_ms: 200,
+                cron: "b".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Promote".to_string(),
+                applied_canary_percent: Some(10),
+                total_requests: 1,
+                failed_requests: 0,
+                p95_latency_ms: 1,
+            },
+            CanaryAuditRecord {
+                recorded_at_ms: 300,
+                cron: "c".to_string(),
+                event_type: None,
+                dry_run: true,
+                stable_version_id: "stable".to_string(),
+                canary_version_id: "canary".to_string(),
+                decision: "Rollback".to_string(),
+                applied_canary_percent: Some(0),
+                total_requests: 1,
+                failed_requests: 1,
+                p95_latency_ms: 1,
+            },
+        ];
+        let selection = canary_audit_archive_selection_indices(records.as_slice(), 2, Some(250));
+        assert_eq!(selection, vec![0, 1]);
+
+        let remaining = remove_canary_audit_records_by_indices(records, &selection);
+        let got: Vec<u64> = remaining
+            .iter()
+            .map(|record| record.recorded_at_ms)
+            .collect();
+        assert_eq!(got, vec![300]);
     }
 
     #[test]
