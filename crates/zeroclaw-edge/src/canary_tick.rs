@@ -16,9 +16,9 @@ use crate::canary_orchestrator::{
     CanaryEventSink, CanaryMetricsSource, CanaryOrchestrator, CanaryTickOutcome,
     CanaryTrafficClient,
 };
-use crate::cloudflare_cli::{
-    CloudflareWranglerTrafficClient, CommandOutput, CommandRunner, SystemCommandRunner,
-};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::cloudflare_cli::SystemCommandRunner;
+use crate::cloudflare_cli::{CloudflareWranglerTrafficClient, CommandRunner};
 
 /// One-shot canary tick runtime configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +60,7 @@ where
 }
 
 /// Builds a reusable canary tick service using system command runners.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_cloudflare_canary_tick_service<E>(
     controller: CanaryController,
     event_sink: Arc<E>,
@@ -117,6 +118,7 @@ where
 }
 
 /// Runs a single canary tick with system command runners.
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn run_cloudflare_one_shot_canary_tick<E>(
     controller: CanaryController,
     event_sink: Arc<E>,
@@ -125,8 +127,14 @@ pub async fn run_cloudflare_one_shot_canary_tick<E>(
 where
     E: CanaryEventSink,
 {
-    let mut service = build_cloudflare_canary_tick_service(controller, event_sink, config)?;
-    service.tick().await
+    run_cloudflare_one_shot_canary_tick_with_runners(
+        controller,
+        event_sink,
+        config,
+        SystemCommandRunner,
+        SystemCommandRunner,
+    )
+    .await
 }
 
 /// Same as [`run_cloudflare_one_shot_canary_tick`], but with injected command
@@ -143,14 +151,18 @@ where
     MR: CommandRunner,
     TR: CommandRunner,
 {
-    let mut service = build_cloudflare_canary_tick_service_with_runners(
-        controller,
-        event_sink,
-        config,
+    let metrics_source = Arc::new(CurlCanaryMetricsSource::new(
+        config.metrics,
         metrics_runner,
+    )?);
+    let mut orchestrator = build_cloudflare_wrangler_orchestrator_with_runner(
+        controller,
+        metrics_source,
+        event_sink,
+        config.wiring,
         traffic_runner,
     )?;
-    service.tick().await
+    orchestrator.tick().await
 }
 
 #[cfg(test)]
@@ -317,13 +329,14 @@ mod tests {
     #[derive(Default)]
     struct FailRunner;
 
+    #[async_trait::async_trait(?Send)]
     impl CommandRunner for FailRunner {
-        fn run(
+        async fn run(
             &self,
             _program: &str,
             _args: &[String],
             _cwd: Option<&PathBuf>,
-        ) -> Result<CommandOutput> {
+        ) -> Result<crate::cloudflare_cli::CommandOutput> {
             Err(anyhow::anyhow!("runner failed"))
         }
     }

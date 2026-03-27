@@ -21,7 +21,7 @@ pub enum CanaryTriggerEvent {
 }
 
 /// Boundary for scheduler trigger sources.
-#[async_trait]
+#[async_trait(?Send)]
 pub trait CanaryTrigger {
     async fn wait_next(&mut self) -> Result<CanaryTriggerEvent>;
 }
@@ -60,7 +60,7 @@ impl FixedIntervalTrigger {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl CanaryTrigger for FixedIntervalTrigger {
     async fn wait_next(&mut self) -> Result<CanaryTriggerEvent> {
         if self.remaining_ticks == Some(0) {
@@ -79,12 +79,12 @@ impl CanaryTrigger for FixedIntervalTrigger {
 }
 
 /// Runner boundary invoked by the scheduler on each trigger tick.
-#[async_trait]
+#[async_trait(?Send)]
 pub trait CanaryTickRunner {
     async fn run_tick(&mut self) -> Result<CanaryTickOutcome>;
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<M, C, E> CanaryTickRunner for CloudflareCanaryTickService<M, C, E>
 where
     M: CanaryMetricsSource,
@@ -191,7 +191,7 @@ mod tests {
         count: usize,
     }
 
-    #[async_trait]
+    #[async_trait(?Send)]
     impl CanaryTickRunner for CountingRunner {
         async fn run_tick(&mut self) -> Result<CanaryTickOutcome> {
             self.count = self.count.saturating_add(1);

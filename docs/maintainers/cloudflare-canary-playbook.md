@@ -24,11 +24,15 @@ This playbook defines how ZeroClaw evaluates canary safety before changing edge 
   - `crates/zeroclaw-edge/src/canary_schedule.rs`
   - fixed-interval trigger and scheduler loop policy (`continue_on_error`, max consecutive failures)
   - integration-style tests for multi-tick promote -> rollback behavior
+- Cloudflare Cron binding:
+  - `crates/zeroclaw-edge/src/canary_cron.rs`
+  - validates scheduled event payloads and maps them to one canary tick execution
+  - integration-style test verifies cron payload -> traffic split command path
 - Deterministic CI gate:
   - `./scripts/ci/cloudflare_canary_check.sh`
 - WASM portability check included in canary gate.
 
-This PR now includes scheduled loop wiring primitives, but does **not** yet wire Cloudflare Cron events or a production telemetry backend adapter.
+This PR now includes Cloudflare Cron event binding primitives, but does **not** yet include production deployment glue code for Worker runtime entrypoint wiring.
 
 ## Rollout Inputs
 
@@ -74,10 +78,38 @@ This validates:
 3. wasm32 compile viability for `zeroclaw-edge`
 4. one-shot telemetry/runtime integration behavior
 5. scheduled trigger behavior and multi-tick integration flow
+6. cron payload -> tick execution binding behavior
+
+## Local Worker Chat Demo (End-To-End)
+
+For a minimal Worker runtime call/response demo using OpenRouter:
+
+```bash
+./scripts/edge_worker_chat_demo.sh
+```
+
+Default behavior:
+
+1. resolves `OPENROUTER_API_KEY` from environment, or falls back to `~/Projects/moneydevkit/open-money/.env.local`
+2. starts `wrangler dev` for `crates/zeroclaw-edge-worker`
+3. sends one `/chat` request with prompt `reply with exactly: edge demo ok`
+4. prints the JSON response and exits
+
+To run interactive call/response mode:
+
+```bash
+ZEROCLAW_EDGE_DEMO_INTERACTIVE=1 ./scripts/edge_worker_chat_demo.sh
+```
+
+To override model or local port:
+
+```bash
+ZEROCLAW_OPENROUTER_MODEL=openai/gpt-4o-mini ZEROCLAW_EDGE_DEMO_PORT=8787 ./scripts/edge_worker_chat_demo.sh "summarize wasm advantages in 2 bullets"
+```
 
 ## Intended Next Step
 
-1. Bind Cloudflare Cron events (or external scheduler) to scheduler trigger boundary.
+1. Wire Worker runtime cron handler to call `run_cloudflare_cron_event(...)`.
 2. Feed production telemetry endpoint into `CurlCanaryMetricsSource`.
-3. Execute scheduled run loop in production environment with rollout policy defaults.
+3. Execute scheduler loop or one-shot cron flow in production with rollout policy defaults.
 4. Persist decision/audit events for postmortems and rollback drills.
