@@ -16,12 +16,16 @@ This playbook defines how ZeroClaw evaluates canary safety before changing edge 
 - Live orchestrator wiring in `crates/zeroclaw-edge/src/canary_live.rs`:
   - typed assembly from controller + metrics source + event sink to Wrangler traffic client
   - deterministic wiring coverage using injected command runner
+- Telemetry/runtime integration:
+  - `crates/zeroclaw-edge/src/canary_metrics.rs` (`curl` JSON metrics source)
+  - `crates/zeroclaw-edge/src/canary_tick.rs` (one-shot runtime path)
+  - integration-style tests cover: local telemetry HTTP server -> canary decision -> traffic split apply command
 - Deterministic CI gate:
   - `./scripts/ci/cloudflare_canary_check.sh`
 - WASM portability check included in canary gate.
 
 This PR does **not** yet run autonomous scheduled production canary loops.
-It now includes the typed live wiring path plus deterministic tests, so the remaining work is scheduler/telemetry integration and rollout policy operations.
+It now includes the one-shot runtime execution path, so the remaining work is scheduler wiring and production rollout policy operations.
 
 ## Rollout Inputs
 
@@ -63,13 +67,13 @@ Run:
 This validates:
 
 1. canary invariants and state-machine behavior
-2. wasm32 compile viability for `zeroclaw-edge`
+2. canary orchestration behavior (hold/promote/rollback/apply/persist)
+3. wasm32 compile viability for `zeroclaw-edge`
+4. one-shot telemetry/runtime integration behavior
 
-## Intended Live Wiring (Next Step)
+## Intended Next Step
 
-1. Pull interval metrics from edge telemetry.
-2. Build orchestrator with `build_cloudflare_wrangler_orchestrator(...)`.
-3. Execute `tick()` for each rollout interval.
-4. On `Promote`, update Cloudflare version traffic split.
-5. On `Rollback`, shift traffic to stable version immediately.
-6. Persist decision/audit events for postmortems.
+1. Trigger one-shot tick on a schedule (Cron trigger or external scheduler).
+2. Feed production telemetry endpoint into `CurlCanaryMetricsSource`.
+3. Execute `run_cloudflare_one_shot_canary_tick(...)` each interval.
+4. Persist decision/audit events for postmortems and rollback drills.

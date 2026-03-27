@@ -19,7 +19,9 @@ fi
 # without external cloud credentials.
 "${cargo_cmd[@]}" test -p zeroclaw-edge canary::tests:: --locked --verbose
 "${cargo_cmd[@]}" test -p zeroclaw-edge canary_live::tests:: --locked --verbose
+"${cargo_cmd[@]}" test -p zeroclaw-edge canary_metrics::tests:: --locked --verbose
 "${cargo_cmd[@]}" test -p zeroclaw-edge canary_orchestrator::tests:: --locked --verbose
+"${cargo_cmd[@]}" test -p zeroclaw-edge canary_tick::tests:: --locked --verbose
 "${cargo_cmd[@]}" test -p zeroclaw-edge cloudflare_cli::tests:: --locked --verbose
 
 # Keep the canary controller path wasm-portable.
