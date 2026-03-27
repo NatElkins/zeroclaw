@@ -18,6 +18,7 @@ fi
 # Cloudflare canary gate is deterministic/pure and should work in local CI
 # without external cloud credentials.
 "${cargo_cmd[@]}" test -p zeroclaw-edge canary::tests:: --locked --verbose
+"${cargo_cmd[@]}" test -p zeroclaw-edge canary_live::tests:: --locked --verbose
 "${cargo_cmd[@]}" test -p zeroclaw-edge canary_orchestrator::tests:: --locked --verbose
 "${cargo_cmd[@]}" test -p zeroclaw-edge cloudflare_cli::tests:: --locked --verbose
 

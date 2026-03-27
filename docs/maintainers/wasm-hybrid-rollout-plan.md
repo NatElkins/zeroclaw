@@ -81,9 +81,14 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - deterministic end-to-end canary tick simulations
 13. Cloudflare CLI traffic client wiring
    - PR: #17
-   - status: in progress in stack
+   - status: complete in stack
    - typed `wrangler versions deploy` adapter for rollout split updates
    - deterministic command-assembly tests including rollback and `npx wrangler` invocation
+14. Live canary orchestrator wiring
+   - PR: #18
+   - status: in progress in stack
+   - typed assembly path from canary controller + metrics source + event sink to live `wrangler` traffic client
+   - deterministic orchestration tick test through injected command-runner boundary
 
 ## Milestones And Exit Criteria
 

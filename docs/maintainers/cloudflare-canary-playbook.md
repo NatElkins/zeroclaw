@@ -13,12 +13,15 @@ This playbook defines how ZeroClaw evaluates canary safety before changing edge 
   - typed command construction for `wrangler versions deploy`
   - support for direct `wrangler` and wrapped `npx wrangler` invocation
   - deterministic unit coverage for promote/rollback/error command paths
+- Live orchestrator wiring in `crates/zeroclaw-edge/src/canary_live.rs`:
+  - typed assembly from controller + metrics source + event sink to Wrangler traffic client
+  - deterministic wiring coverage using injected command runner
 - Deterministic CI gate:
   - `./scripts/ci/cloudflare_canary_check.sh`
 - WASM portability check included in canary gate.
 
-This PR does **not** yet run autonomous production canary loops against live Cloudflare traffic.
-It establishes the rollout decision contract and CLI adapter that production control-plane wiring will consume.
+This PR does **not** yet run autonomous scheduled production canary loops.
+It now includes the typed live wiring path plus deterministic tests, so the remaining work is scheduler/telemetry integration and rollout policy operations.
 
 ## Rollout Inputs
 
@@ -65,7 +68,8 @@ This validates:
 ## Intended Live Wiring (Next Step)
 
 1. Pull interval metrics from edge telemetry.
-2. Feed metrics into `CanaryController::observe(...)`.
-3. On `Promote`, update Cloudflare version traffic split.
-4. On `Rollback`, shift traffic to stable version immediately.
-5. Persist decision/audit events for postmortems.
+2. Build orchestrator with `build_cloudflare_wrangler_orchestrator(...)`.
+3. Execute `tick()` for each rollout interval.
+4. On `Promote`, update Cloudflare version traffic split.
+5. On `Rollback`, shift traffic to stable version immediately.
+6. Persist decision/audit events for postmortems.
