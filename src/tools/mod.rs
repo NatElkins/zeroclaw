@@ -392,33 +392,6 @@ pub fn default_tools_with_runtime(
     boxed_registry_from_arcs(tools)
 }
 
-/// Register skill-defined tools into an existing tool registry.
-///
-/// Converts each skill's `[[tools]]` entries into callable `Tool` implementations
-/// and appends them to the registry. Skill tools that would shadow a built-in tool
-/// name are skipped with a warning.
-pub fn register_skill_tools(
-    tools_registry: &mut Vec<Box<dyn Tool>>,
-    skills: &[crate::skills::Skill],
-    security: Arc<SecurityPolicy>,
-) {
-    let skill_tools = crate::skills::skills_to_tools(skills, security);
-    let existing_names: std::collections::HashSet<String> = tools_registry
-        .iter()
-        .map(|t| t.name().to_string())
-        .collect();
-    for tool in skill_tools {
-        if existing_names.contains(tool.name()) {
-            tracing::warn!(
-                "Skill tool '{}' shadows built-in tool, skipping",
-                tool.name()
-            );
-        } else {
-            tools_registry.push(tool);
-        }
-    }
-}
-
 /// Create full tool registry including memory tools and optional Composio
 #[allow(
     clippy::implicit_hasher,
@@ -581,53 +554,6 @@ pub fn all_tools_with_runtime(
         &[RuntimeCapability::Filesystem],
     );
     tool_arcs.push(Arc::new(CalculatorTool::new()));
-
-    // Register discord_search if discord_history channel is configured
-    if root_config.channels_config.discord_history.is_some() {
-        match crate::memory::SqliteMemory::new_named(workspace_dir, "discord") {
-            Ok(discord_mem) => {
-                tool_arcs.push(Arc::new(DiscordSearchTool::new(Arc::new(discord_mem))));
-            }
-            Err(e) => {
-                tracing::warn!("discord_search: failed to open discord.db: {e}");
-            }
-        }
-    }
-
-    // LLM task tool — always registered when a provider is configured
-    {
-        let llm_task_provider = root_config
-            .default_provider
-            .clone()
-            .unwrap_or_else(|| "openrouter".to_string());
-        let llm_task_model = root_config
-            .default_model
-            .clone()
-            .unwrap_or_else(|| "openai/gpt-4o-mini".to_string());
-        let llm_task_runtime_options = crate::providers::ProviderRuntimeOptions {
-            auth_profile_override: None,
-            provider_api_url: root_config.api_url.clone(),
-            zeroclaw_dir: root_config
-                .config_path
-                .parent()
-                .map(std::path::PathBuf::from),
-            secrets_encrypt: root_config.secrets.encrypt,
-            reasoning_enabled: root_config.runtime.reasoning_enabled,
-            reasoning_effort: root_config.runtime.reasoning_effort.clone(),
-            provider_timeout_secs: Some(root_config.provider_timeout_secs),
-            extra_headers: root_config.extra_headers.clone(),
-            api_path: root_config.api_path.clone(),
-            provider_max_tokens: root_config.provider_max_tokens,
-        };
-        tool_arcs.push(Arc::new(LlmTaskTool::new(
-            security.clone(),
-            llm_task_provider,
-            llm_task_model,
-            root_config.default_temperature,
-            root_config.api_key.clone(),
-            llm_task_runtime_options,
-        )));
-    }
 
     if matches!(
         root_config.skills.prompt_injection_mode,
@@ -901,18 +827,6 @@ pub fn all_tools_with_runtime(
         );
     }
 
-    // Session-to-session messaging tools (always available when sessions dir exists)
-    if let Ok(session_store) = crate::channels::session_store::SessionStore::new(workspace_dir) {
-        let backend: Arc<dyn crate::channels::session_backend::SessionBackend> =
-            Arc::new(session_store);
-        tool_arcs.push(Arc::new(SessionsListTool::new(backend.clone())));
-        tool_arcs.push(Arc::new(SessionsHistoryTool::new(
-            backend.clone(),
-            security.clone(),
-        )));
-        tool_arcs.push(Arc::new(SessionsSendTool::new(backend, security.clone())));
-    }
-
     // LinkedIn integration (config-gated)
     if root_config.linkedin.enabled && has_filesystem_access {
         tool_arcs.push(Arc::new(LinkedInTool::new(
@@ -924,35 +838,6 @@ pub fn all_tools_with_runtime(
         )));
     } else if root_config.linkedin.enabled {
         tracing::warn!("linkedin: skipped registration because filesystem access is unavailable");
-    }
-
-    // Standalone image generation tool (config-gated)
-    if root_config.image_gen.enabled {
-        tool_arcs.push(Arc::new(ImageGenTool::new(
-            security.clone(),
-            workspace_dir.to_path_buf(),
-            root_config.image_gen.default_model.clone(),
-            root_config.image_gen.api_key_env.clone(),
-        )));
-    }
-
-    // Poll tool — always registered; uses late-bound channel map handle
-    let channel_map_handle: ChannelMapHandle = Arc::new(RwLock::new(HashMap::new()));
-    tool_arcs.push(Arc::new(PollTool::new(
-        security.clone(),
-        Arc::clone(&channel_map_handle),
-    )));
-
-    // SOP tools (registered when sops_dir is configured)
-    if root_config.sop.sops_dir.is_some() {
-        let sop_engine = Arc::new(std::sync::Mutex::new(crate::sop::SopEngine::new(
-            root_config.sop.clone(),
-        )));
-        tool_arcs.push(Arc::new(SopListTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopExecuteTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopAdvanceTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopApproveTool::new(Arc::clone(&sop_engine))));
-        tool_arcs.push(Arc::new(SopStatusTool::new(Arc::clone(&sop_engine))));
     }
 
     if let Some(key) = composio_key {
@@ -1141,18 +1026,6 @@ pub fn all_tools_with_runtime(
         )));
     } else if root_config.workspace.enabled {
         tracing::warn!("workspace: skipped registration because filesystem access is unavailable");
-    }
-
-    // Verifiable Intent tool (opt-in via config)
-    if root_config.verifiable_intent.enabled {
-        let strictness = match root_config.verifiable_intent.strictness.as_str() {
-            "permissive" => crate::verifiable_intent::StrictnessMode::Permissive,
-            _ => crate::verifiable_intent::StrictnessMode::Strict,
-        };
-        tool_arcs.push(Arc::new(VerifiableIntentTool::new(
-            security.clone(),
-            strictness,
-        )));
     }
 
     // ── WASM plugin tools (requires plugins-wasm feature) ──
@@ -1733,61 +1606,6 @@ mod tests {
         assert!(!names.contains(&"linkedin"));
         assert!(names.contains(&"schedule"));
         assert!(names.contains(&"calculator"));
-        assert!(names.contains(&"browser_open"));
-    }
-
-    #[test]
-    fn all_tools_with_runtime_registers_filesystem_tools_without_shell() {
-        let tmp = TempDir::new().unwrap();
-        let security = Arc::new(SecurityPolicy::default());
-        let mem = markdown_memory(&tmp);
-        let browser = BrowserConfig {
-            enabled: true,
-            allowed_domains: vec!["example.com".into()],
-            session_name: None,
-            ..BrowserConfig::default()
-        };
-        let http = crate::config::HttpRequestConfig::default();
-        let mut cfg = test_config(&tmp);
-        cfg.text_browser.enabled = true;
-        cfg.google_workspace.enabled = true;
-        cfg.browser_delegate.enabled = true;
-        cfg.skills.prompt_injection_mode = crate::config::SkillsPromptInjectionMode::Compact;
-
-        let runtime: Arc<dyn RuntimeAdapter> = Arc::new(CapabilityTestRuntime::new(false, true));
-        let (tools, _) = all_tools_with_runtime(
-            Arc::new(cfg.clone()),
-            &security,
-            runtime,
-            mem,
-            None,
-            None,
-            &browser,
-            &http,
-            &crate::config::WebFetchConfig::default(),
-            tmp.path(),
-            &HashMap::new(),
-            None,
-            &cfg,
-        );
-        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-
-        assert!(!names.contains(&"shell"));
-        assert!(!names.contains(&"content_search"));
-        assert!(!names.contains(&"text_browser"));
-        assert!(!names.contains(&"google_workspace"));
-        assert!(!names.contains(&"browser_delegate"));
-        assert!(!names.contains(&"git_operations"));
-
-        assert!(names.contains(&"file_read"));
-        assert!(names.contains(&"file_write"));
-        assert!(names.contains(&"file_edit"));
-        assert!(names.contains(&"glob_search"));
-        assert!(names.contains(&"pushover"));
-        assert!(names.contains(&"read_skill"));
-        assert!(names.contains(&"pdf_read"));
-        assert!(names.contains(&"screenshot"));
-        assert!(names.contains(&"image_info"));
         assert!(names.contains(&"browser_open"));
     }
 }

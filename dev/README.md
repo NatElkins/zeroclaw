@@ -132,6 +132,10 @@ To run the incremental strict gate (changed Rust lines only):
 ./dev/ci.sh audit
 ./dev/ci.sh security
 ./dev/ci.sh docker-smoke
+# Feature-gated WASM runtime adapter tests
+./dev/ci.sh test-wasm-runtime
+# Hybrid local-readiness suite (component+integration+system+shell+delegate+wasm)
+./dev/ci.sh test-hybrid-local
 # Optional host-side docs gate (changed-line markdown lint)
 ./scripts/ci/docs_quality_gate.sh
 # Optional host-side docs links gate (changed-line added links)
