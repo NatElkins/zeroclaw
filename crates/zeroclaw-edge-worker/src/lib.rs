@@ -68,6 +68,10 @@ const ENV_CANARY_DRILL_TOKEN: &str = "ZEROCLAW_CANARY_DRILL_TOKEN";
 const ENV_CANARY_AUDIT_MAX_RECORDS: &str = "ZEROCLAW_CANARY_AUDIT_MAX_RECORDS";
 #[cfg(target_arch = "wasm32")]
 const ENV_CANARY_AUDIT_RETENTION_MS: &str = "ZEROCLAW_CANARY_AUDIT_RETENTION_MS";
+#[cfg(any(test, target_arch = "wasm32"))]
+const ENV_CANARY_ARCHIVE_SINK_URL: &str = "ZEROCLAW_CANARY_ARCHIVE_SINK_URL";
+#[cfg(any(test, target_arch = "wasm32"))]
+const ENV_CANARY_ARCHIVE_SINK_AUTH_TOKEN: &str = "ZEROCLAW_CANARY_ARCHIVE_SINK_AUTH_TOKEN";
 #[cfg(target_arch = "wasm32")]
 const ENV_CANARY_ARTIFACT_SIGNING_KEY: &str = "ZEROCLAW_CANARY_ARTIFACT_SIGNING_KEY";
 #[cfg(target_arch = "wasm32")]
@@ -80,10 +84,6 @@ const MAX_CANARY_AUDIT_MAX_RECORDS: usize = 5_000;
 const DEFAULT_CANARY_AUDIT_RECENT_LIMIT: usize = 20;
 #[cfg(any(test, target_arch = "wasm32"))]
 const MAX_CANARY_AUDIT_RECENT_LIMIT: usize = 200;
-#[cfg(any(test, target_arch = "wasm32"))]
-const DEFAULT_CANARY_AUDIT_RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1000;
-#[cfg(any(test, target_arch = "wasm32"))]
-const MAX_CANARY_AUDIT_RETENTION_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -305,23 +305,42 @@ struct CanaryAuditRecentResponse {
 struct CanaryAuditAppendRequest {
     record: CanaryAuditRecord,
     max_records: usize,
-    retention_ms: u64,
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CanaryAuditRemoteSinkSettings {
+    url: String,
+    auth_token: Option<String>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct CanaryAuditArchiveRequest {
+struct CanaryAuditRemoteArchivePayload {
+    generated_at_ms: u64,
+    worker_name: String,
+    source: String,
     limit: usize,
     before_ms: Option<u64>,
-    delete_archived: bool,
+    records: Vec<CanaryAuditRecord>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanaryAuditRemoteArchiveBundle {
+    payload: CanaryAuditRemoteArchivePayload,
+    signature: CanaryDrillArtifactSignature,
 }
 
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct CanaryAuditArchiveResponse {
-    records: Vec<CanaryAuditRecord>,
-    deleted: usize,
-    remaining: usize,
+struct CanaryAuditRemoteArchiveUploadResponse {
+    sink_url: String,
+    sink_status: u16,
+    uploaded_records: usize,
+    deleted_records: usize,
+    remaining_records: usize,
+    payload_sha256_hex: String,
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -379,23 +398,6 @@ fn parse_canary_audit_recent_limit(raw: Option<&str>) -> Result<usize> {
         return Err(anyhow!("canary audit limit must be greater than zero"));
     }
     Ok(parsed.min(MAX_CANARY_AUDIT_RECENT_LIMIT))
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-fn parse_canary_audit_retention_ms(raw: Option<&str>) -> Result<u64> {
-    let parsed = raw
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::parse::<u64>)
-        .transpose()
-        .context("invalid ZEROCLAW_CANARY_AUDIT_RETENTION_MS")?
-        .unwrap_or(DEFAULT_CANARY_AUDIT_RETENTION_MS);
-    if parsed == 0 {
-        return Err(anyhow!(
-            "ZEROCLAW_CANARY_AUDIT_RETENTION_MS must be greater than zero"
-        ));
-    }
-    Ok(parsed.min(MAX_CANARY_AUDIT_RETENTION_MS))
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -462,6 +464,34 @@ fn remove_canary_audit_records_by_indices(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+fn parse_canary_audit_remote_sink_settings<F>(
+    mut get: F,
+) -> Result<Option<CanaryAuditRemoteSinkSettings>>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let sink_url = get(ENV_CANARY_ARCHIVE_SINK_URL)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(sink_url) = sink_url else {
+        return Ok(None);
+    };
+    if !(sink_url.starts_with("http://") || sink_url.starts_with("https://")) {
+        return Err(anyhow!(
+            "{} must start with http:// or https://",
+            ENV_CANARY_ARCHIVE_SINK_URL
+        ));
+    }
+    let auth_token = get(ENV_CANARY_ARCHIVE_SINK_AUTH_TOKEN)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Ok(Some(CanaryAuditRemoteSinkSettings {
+        url: sink_url,
+        auth_token,
+    }))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 fn parse_canary_drill_export_target(raw: &str) -> Result<CanaryDrillExportTarget> {
     let normalized = raw.trim().to_ascii_lowercase();
     if normalized.is_empty() {
@@ -507,32 +537,48 @@ fn hex_encode_lower(bytes: &[u8]) -> String {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-fn sign_canary_drill_artifact_payload(
-    payload: CanaryDrillArtifactPayload,
+fn build_hmac_sha256_signature<T: Serialize>(
+    payload: &T,
     signing_key: &str,
     key_id: Option<&str>,
-) -> Result<CanaryDrillArtifactBundle> {
+) -> Result<CanaryDrillArtifactSignature> {
     let trimmed = signing_key.trim();
     if trimmed.is_empty() {
         return Err(anyhow!("artifact signing key must not be empty"));
     }
-    let payload_bytes =
-        serde_json::to_vec(&payload).context("failed serializing canary drill artifact payload")?;
+    let payload_bytes = serde_json::to_vec(payload).context("failed serializing signed payload")?;
     let payload_digest = Sha256::digest(&payload_bytes);
     let payload_sha256_hex = hex_encode_lower(payload_digest.as_ref());
     let mut mac = Hmac::<Sha256>::new_from_slice(trimmed.as_bytes())
         .map_err(|e| anyhow!("invalid artifact signing key: {e}"))?;
     mac.update(&payload_bytes);
     let signature_hmac_sha256_hex = hex_encode_lower(&mac.finalize().into_bytes());
-    Ok(CanaryDrillArtifactBundle {
-        payload,
-        signature: CanaryDrillArtifactSignature {
-            algorithm: "hmac-sha256".to_string(),
-            key_id: key_id.map(|id| id.to_string()),
-            payload_sha256_hex,
-            signature_hmac_sha256_hex,
-        },
+    Ok(CanaryDrillArtifactSignature {
+        algorithm: "hmac-sha256".to_string(),
+        key_id: key_id.map(|id| id.to_string()),
+        payload_sha256_hex,
+        signature_hmac_sha256_hex,
     })
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn sign_canary_drill_artifact_payload(
+    payload: CanaryDrillArtifactPayload,
+    signing_key: &str,
+    key_id: Option<&str>,
+) -> Result<CanaryDrillArtifactBundle> {
+    let signature = build_hmac_sha256_signature(&payload, signing_key, key_id)?;
+    Ok(CanaryDrillArtifactBundle { payload, signature })
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn sign_canary_audit_remote_archive_payload(
+    payload: CanaryAuditRemoteArchivePayload,
+    signing_key: &str,
+    key_id: Option<&str>,
+) -> Result<CanaryAuditRemoteArchiveBundle> {
+    let signature = build_hmac_sha256_signature(&payload, signing_key, key_id)?;
+    Ok(CanaryAuditRemoteArchiveBundle { payload, signature })
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -1048,16 +1094,9 @@ mod wasm_runtime {
                         .await?
                         .unwrap_or_default();
                     records.push(append_req.record);
-                    let reference_ms = records
-                        .last()
-                        .map(|record| record.recorded_at_ms)
-                        .unwrap_or_default();
-                    records = apply_canary_audit_retention(
-                        records,
-                        append_req.max_records,
-                        append_req.retention_ms,
-                        reference_ms,
-                    );
+                    if records.len() > append_req.max_records {
+                        records = records.split_off(records.len() - append_req.max_records);
+                    }
                     self.state
                         .storage()
                         .put(CANARY_AUDIT_STORAGE_KEY, &records)
@@ -1080,46 +1119,6 @@ mod wasm_runtime {
                     };
                     records.reverse();
                     Response::from_json(&CanaryAuditRecentResponse { records })
-                }
-                (Method::Post, "/archive") => {
-                    let archive_req: CanaryAuditArchiveRequest = req.json().await.map_err(|e| {
-                        worker::Error::RustError(format!(
-                            "invalid canary audit archive payload: {e}"
-                        ))
-                    })?;
-                    if archive_req.limit == 0 {
-                        return Response::error("limit must be greater than zero", 400);
-                    }
-                    let mut records = self
-                        .state
-                        .storage()
-                        .get::<Vec<CanaryAuditRecord>>(CANARY_AUDIT_STORAGE_KEY)
-                        .await?
-                        .unwrap_or_default();
-                    let selection = canary_audit_archive_selection_indices(
-                        records.as_slice(),
-                        archive_req.limit,
-                        archive_req.before_ms,
-                    );
-                    let exported = selection
-                        .iter()
-                        .map(|idx| records[*idx].clone())
-                        .collect::<Vec<_>>();
-                    let deleted = if archive_req.delete_archived {
-                        records = remove_canary_audit_records_by_indices(records, &selection);
-                        self.state
-                            .storage()
-                            .put(CANARY_AUDIT_STORAGE_KEY, &records)
-                            .await?;
-                        selection.len()
-                    } else {
-                        0
-                    };
-                    Response::from_json(&CanaryAuditArchiveResponse {
-                        records: exported,
-                        deleted,
-                        remaining: records.len(),
-                    })
                 }
                 (Method::Post, "/clear") => {
                     self.state
@@ -1259,13 +1258,11 @@ mod wasm_runtime {
         env: &Env,
         record: CanaryAuditRecord,
         max_records: usize,
-        retention_ms: u64,
     ) -> Result<()> {
         let stub = canary_audit_stub(env).await?;
         let body = serde_json::to_string(&CanaryAuditAppendRequest {
             record,
             max_records,
-            retention_ms,
         })
         .map_err(|e| {
             worker::Error::RustError(format!("failed serializing canary audit append body: {e}"))
@@ -1306,32 +1303,6 @@ mod wasm_runtime {
         Ok(payload.records)
     }
 
-    async fn archive_canary_audit_records(
-        env: &Env,
-        request: CanaryAuditArchiveRequest,
-    ) -> Result<CanaryAuditArchiveResponse> {
-        let stub = canary_audit_stub(env).await?;
-        let body = serde_json::to_string(&request).map_err(|e| {
-            worker::Error::RustError(format!("failed serializing canary audit archive body: {e}"))
-        })?;
-        let mut init = RequestInit::new();
-        init.with_method(Method::Post);
-        let headers = Headers::new();
-        headers
-            .set("Content-Type", "application/json")
-            .map_err(|e| worker::Error::RustError(format!("failed setting content-type: {e}")))?;
-        init.with_headers(headers);
-        init.with_body(Some(body.into()));
-        let req = Request::new_with_init(&canary_audit_do_url("/archive"), &init).map_err(|e| {
-            worker::Error::RustError(format!("failed creating canary audit archive request: {e}"))
-        })?;
-        let resp = stub
-            .fetch_with_request(req)
-            .await
-            .map_err(|e| worker::Error::RustError(format!("canary audit archive failed: {e}")))?;
-        parse_required_json_response(resp, "canary audit archive").await
-    }
-
     async fn clear_canary_audit_records(env: &Env) -> Result<()> {
         let stub = canary_audit_stub(env).await?;
         let mut init = RequestInit::new();
@@ -1351,6 +1322,49 @@ mod wasm_runtime {
             )));
         }
         Ok(())
+    }
+
+    async fn upload_canary_audit_remote_archive_bundle(
+        settings: &CanaryAuditRemoteSinkSettings,
+        bundle: &CanaryAuditRemoteArchiveBundle,
+    ) -> Result<u16> {
+        let body = serde_json::to_string(bundle).map_err(|e| {
+            worker::Error::RustError(format!(
+                "failed serializing canary remote archive bundle: {e}"
+            ))
+        })?;
+        let mut init = RequestInit::new();
+        init.with_method(Method::Post);
+        let headers = Headers::new();
+        headers
+            .set("Content-Type", "application/json")
+            .map_err(|e| worker::Error::RustError(format!("failed setting content-type: {e}")))?;
+        if let Some(token) = settings.auth_token.as_deref() {
+            headers
+                .set("Authorization", &format!("Bearer {token}"))
+                .map_err(|e| {
+                    worker::Error::RustError(format!(
+                        "failed setting archive sink auth header: {e}"
+                    ))
+                })?;
+        }
+        init.with_headers(headers);
+        init.with_body(Some(body.into()));
+        let req = Request::new_with_init(settings.url.as_str(), &init).map_err(|e| {
+            worker::Error::RustError(format!("failed creating archive sink request: {e}"))
+        })?;
+        let mut resp = Fetch::Request(req)
+            .send()
+            .await
+            .map_err(|e| worker::Error::RustError(format!("archive sink request failed: {e}")))?;
+        let status = resp.status_code();
+        if !(200..=299).contains(&status) {
+            let body = resp.text().await.unwrap_or_else(|_| String::new());
+            return Err(worker::Error::RustError(format!(
+                "archive sink returned status {status}: {body}"
+            )));
+        }
+        Ok(status)
     }
 
     async fn send_memory_request(
@@ -1537,6 +1551,13 @@ mod wasm_runtime {
             .map(|v| v.to_string())
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
+    }
+
+    fn canary_audit_remote_sink_settings(
+        env: &Env,
+    ) -> Result<Option<CanaryAuditRemoteSinkSettings>> {
+        parse_canary_audit_remote_sink_settings(|key| env.var(key).ok().map(|v| v.to_string()))
+            .map_err(|e| worker::Error::RustError(e.to_string()))
     }
 
     fn authorized_drill_token(req: &Request, env: &Env) -> Result<String> {
@@ -1820,13 +1841,6 @@ mod wasm_runtime {
                 .as_deref(),
         )
         .map_err(|e| worker::Error::RustError(e.to_string()))?;
-        let audit_retention_ms = parse_canary_audit_retention_ms(
-            env.var(ENV_CANARY_AUDIT_RETENTION_MS)
-                .ok()
-                .map(|v| v.to_string())
-                .as_deref(),
-        )
-        .map_err(|e| worker::Error::RustError(e.to_string()))?;
         let payload_for_audit = payload.clone();
         let event = CloudflareCronEvent::from_payload(payload)
             .map_err(|e| worker::Error::RustError(e.to_string()))?;
@@ -1871,8 +1885,7 @@ mod wasm_runtime {
             &summary,
             worker::Date::now().as_millis(),
         );
-        append_canary_audit_record(env, audit_record, audit_max_records, audit_retention_ms)
-            .await?;
+        append_canary_audit_record(env, audit_record, audit_max_records).await?;
         Ok(summary)
     }
 
@@ -2197,6 +2210,84 @@ mod wasm_runtime {
         Response::from_json(&response)
     }
 
+    async fn run_canary_audit_archive_upload(mut req: Request, env: &Env) -> Result<Response> {
+        if let Err(err) = authorize_admin_request(&req, env) {
+            let msg = err.to_string();
+            if msg.contains("unauthorized") {
+                return Response::error(msg, 401);
+            }
+            return Err(err);
+        }
+        let sink = match canary_audit_remote_sink_settings(env)? {
+            Some(settings) => settings,
+            None => {
+                return Response::error(
+                    format!(
+                        "archive upload disabled; missing {}",
+                        ENV_CANARY_ARCHIVE_SINK_URL
+                    ),
+                    404,
+                );
+            }
+        };
+        let signing_key = match artifact_signing_key_required(env) {
+            Ok(key) => key,
+            Err(err) => {
+                let msg = err.to_string();
+                if msg.contains("disabled") {
+                    return Response::error(msg, 404);
+                }
+                return Err(err);
+            }
+        };
+        let key_id = artifact_signing_key_id(env);
+        let mut archive_req: CanaryAuditArchiveRequest = req.json().await.map_err(|e| {
+            worker::Error::RustError(format!("invalid archive upload payload: {e}"))
+        })?;
+        let requested_limit = archive_req.limit.to_string();
+        archive_req.limit = parse_canary_audit_recent_limit(Some(requested_limit.as_str()))
+            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let delete_after_upload = archive_req.delete_archived;
+        archive_req.delete_archived = false;
+        let preview = archive_canary_audit_records(env, archive_req.clone()).await?;
+        let worker_name = env
+            .var(ENV_WORKER_NAME)
+            .ok()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "zeroclaw-edge-worker".to_string());
+        let payload = CanaryAuditRemoteArchivePayload {
+            generated_at_ms: worker::Date::now().as_millis(),
+            worker_name,
+            source: "canary_audit_archive_upload".to_string(),
+            limit: archive_req.limit,
+            before_ms: archive_req.before_ms,
+            records: preview.records.clone(),
+        };
+        let bundle = sign_canary_audit_remote_archive_payload(
+            payload,
+            signing_key.as_str(),
+            key_id.as_deref(),
+        )
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let sink_status = upload_canary_audit_remote_archive_bundle(&sink, &bundle).await?;
+        let (deleted_records, remaining_records) = if delete_after_upload {
+            let mut delete_req = archive_req;
+            delete_req.delete_archived = true;
+            let deleted = archive_canary_audit_records(env, delete_req).await?;
+            (deleted.deleted, deleted.remaining)
+        } else {
+            (0usize, preview.remaining)
+        };
+        Response::from_json(&CanaryAuditRemoteArchiveUploadResponse {
+            sink_url: sink.url,
+            sink_status,
+            uploaded_records: preview.records.len(),
+            deleted_records,
+            remaining_records,
+            payload_sha256_hex: bundle.signature.payload_sha256_hex,
+        })
+    }
+
     #[event(fetch)]
     pub async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         if req.method() == Method::Get && req.path().starts_with("/canary/drill/metrics/") {
@@ -2233,6 +2324,14 @@ mod wasm_runtime {
             return match run_canary_audit_archive(req, &env).await {
                 Ok(resp) => Ok(resp),
                 Err(err) => Response::error(format!("canary audit archive failed: {err}"), 500),
+            };
+        }
+        if req.method() == Method::Post && req.path() == "/canary/audit/archive/upload" {
+            return match run_canary_audit_archive_upload(req, &env).await {
+                Ok(resp) => Ok(resp),
+                Err(err) => {
+                    Response::error(format!("canary audit archive upload failed: {err}"), 500)
+                }
             };
         }
 
@@ -2434,124 +2533,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_canary_audit_retention_defaults_caps_and_rejects_zero() {
-        assert_eq!(
-            parse_canary_audit_retention_ms(None).unwrap(),
-            DEFAULT_CANARY_AUDIT_RETENTION_MS
-        );
-        assert_eq!(
-            parse_canary_audit_retention_ms(Some("999999999999")).unwrap(),
-            MAX_CANARY_AUDIT_RETENTION_MS
-        );
-        assert!(parse_canary_audit_retention_ms(Some("0")).is_err());
-    }
-
-    #[test]
-    fn apply_canary_audit_retention_prunes_by_time_and_count() {
-        let records = vec![
-            CanaryAuditRecord {
-                recorded_at_ms: 100,
-                cron: "a".to_string(),
-                event_type: None,
-                dry_run: true,
-                stable_version_id: "stable".to_string(),
-                canary_version_id: "canary".to_string(),
-                decision: "Hold".to_string(),
-                applied_canary_percent: None,
-                total_requests: 1,
-                failed_requests: 0,
-                p95_latency_ms: 1,
-            },
-            CanaryAuditRecord {
-                recorded_at_ms: 200,
-                cron: "b".to_string(),
-                event_type: None,
-                dry_run: true,
-                stable_version_id: "stable".to_string(),
-                canary_version_id: "canary".to_string(),
-                decision: "Promote".to_string(),
-                applied_canary_percent: Some(10),
-                total_requests: 1,
-                failed_requests: 0,
-                p95_latency_ms: 1,
-            },
-            CanaryAuditRecord {
-                recorded_at_ms: 300,
-                cron: "c".to_string(),
-                event_type: None,
-                dry_run: true,
-                stable_version_id: "stable".to_string(),
-                canary_version_id: "canary".to_string(),
-                decision: "Rollback".to_string(),
-                applied_canary_percent: Some(0),
-                total_requests: 1,
-                failed_requests: 1,
-                p95_latency_ms: 1,
-            },
-        ];
-        let retained = apply_canary_audit_retention(records, 2, 120, 300);
-        let got: Vec<u64> = retained
-            .iter()
-            .map(|record| record.recorded_at_ms)
-            .collect();
-        assert_eq!(got, vec![200, 300]);
-    }
-
-    #[test]
-    fn canary_audit_archive_selection_and_removal_are_deterministic() {
-        let records = vec![
-            CanaryAuditRecord {
-                recorded_at_ms: 100,
-                cron: "a".to_string(),
-                event_type: None,
-                dry_run: true,
-                stable_version_id: "stable".to_string(),
-                canary_version_id: "canary".to_string(),
-                decision: "Hold".to_string(),
-                applied_canary_percent: None,
-                total_requests: 1,
-                failed_requests: 0,
-                p95_latency_ms: 1,
-            },
-            CanaryAuditRecord {
-                recorded_at_ms: 200,
-                cron: "b".to_string(),
-                event_type: None,
-                dry_run: true,
-                stable_version_id: "stable".to_string(),
-                canary_version_id: "canary".to_string(),
-                decision: "Promote".to_string(),
-                applied_canary_percent: Some(10),
-                total_requests: 1,
-                failed_requests: 0,
-                p95_latency_ms: 1,
-            },
-            CanaryAuditRecord {
-                recorded_at_ms: 300,
-                cron: "c".to_string(),
-                event_type: None,
-                dry_run: true,
-                stable_version_id: "stable".to_string(),
-                canary_version_id: "canary".to_string(),
-                decision: "Rollback".to_string(),
-                applied_canary_percent: Some(0),
-                total_requests: 1,
-                failed_requests: 1,
-                p95_latency_ms: 1,
-            },
-        ];
-        let selection = canary_audit_archive_selection_indices(records.as_slice(), 2, Some(250));
-        assert_eq!(selection, vec![0, 1]);
-
-        let remaining = remove_canary_audit_records_by_indices(records, &selection);
-        let got: Vec<u64> = remaining
-            .iter()
-            .map(|record| record.recorded_at_ms)
-            .collect();
-        assert_eq!(got, vec![300]);
-    }
-
-    #[test]
     fn canary_audit_recent_limit_from_url_parses_limit() {
         assert_eq!(
             canary_audit_recent_limit_from_url("https://example.com/canary/audit/recent").unwrap(),
@@ -2631,6 +2612,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_canary_audit_remote_sink_settings_is_optional_and_validated() {
+        let disabled = parse_canary_audit_remote_sink_settings(|_key| None).unwrap();
+        assert!(disabled.is_none());
+
+        let mut env = HashMap::<String, String>::new();
+        env.insert(
+            ENV_CANARY_ARCHIVE_SINK_URL.to_string(),
+            "https://sink.example/upload".to_string(),
+        );
+        env.insert(
+            ENV_CANARY_ARCHIVE_SINK_AUTH_TOKEN.to_string(),
+            "sink-token".to_string(),
+        );
+        let settings = parse_canary_audit_remote_sink_settings(|key| env.get(key).cloned())
+            .unwrap()
+            .unwrap();
+        assert_eq!(settings.url, "https://sink.example/upload");
+        assert_eq!(settings.auth_token.as_deref(), Some("sink-token"));
+
+        env.insert(
+            ENV_CANARY_ARCHIVE_SINK_URL.to_string(),
+            "ftp://invalid".to_string(),
+        );
+        assert!(parse_canary_audit_remote_sink_settings(|key| env.get(key).cloned()).is_err());
+    }
+
+    #[test]
     fn drill_scenarios_for_all_target_is_deterministic() {
         let scenarios = drill_scenarios_for_target(CanaryDrillExportTarget::All);
         assert_eq!(
@@ -2678,6 +2686,51 @@ mod tests {
             sign_canary_drill_artifact_payload(payload, signing_key, Some("key-v1")).unwrap();
         assert_eq!(bundle.signature.algorithm, "hmac-sha256");
         assert_eq!(bundle.signature.key_id.as_deref(), Some("key-v1"));
+
+        let payload_bytes = serde_json::to_vec(&bundle.payload).unwrap();
+        let payload_hash = Sha256::digest(&payload_bytes);
+        assert_eq!(
+            bundle.signature.payload_sha256_hex,
+            hex_encode_lower(payload_hash.as_ref())
+        );
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(signing_key.as_bytes()).unwrap();
+        mac.update(&payload_bytes);
+        let expected_signature = hex_encode_lower(&mac.finalize().into_bytes());
+        assert_eq!(
+            bundle.signature.signature_hmac_sha256_hex,
+            expected_signature
+        );
+    }
+
+    #[test]
+    fn sign_canary_audit_remote_archive_payload_generates_verifiable_hmac() {
+        let payload = CanaryAuditRemoteArchivePayload {
+            generated_at_ms: 1_706_000_000_111,
+            worker_name: "edge-worker".to_string(),
+            source: "canary_audit_archive_upload".to_string(),
+            limit: 2,
+            before_ms: Some(1_706_000_000_000),
+            records: vec![CanaryAuditRecord {
+                recorded_at_ms: 1_706_000_000_001,
+                cron: "drill:promote".to_string(),
+                event_type: Some("scheduled".to_string()),
+                dry_run: true,
+                stable_version_id: "stable-v1".to_string(),
+                canary_version_id: "canary-v2".to_string(),
+                decision: "Promote { to: Percent(25) }".to_string(),
+                applied_canary_percent: Some(25),
+                total_requests: 120,
+                failed_requests: 0,
+                p95_latency_ms: 120,
+            }],
+        };
+        let signing_key = "archive-signing-key";
+        let bundle =
+            sign_canary_audit_remote_archive_payload(payload, signing_key, Some("archive-key-v1"))
+                .unwrap();
+        assert_eq!(bundle.signature.algorithm, "hmac-sha256");
+        assert_eq!(bundle.signature.key_id.as_deref(), Some("archive-key-v1"));
 
         let payload_bytes = serde_json::to_vec(&bundle.payload).unwrap();
         let payload_hash = Sha256::digest(&payload_bytes);

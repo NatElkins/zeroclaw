@@ -161,6 +161,13 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - add authenticated `POST /canary/audit/archive` endpoint for bounded archival export with optional deletion
    - add `scripts/edge_worker_canary_audit_archive.sh` for operator-driven archival snapshots
    - add deterministic unit coverage for retention pruning and archival record selection/removal
+26. Remote archival sink wiring (signed upload target)
+   - status: complete in stack
+   - add authenticated `POST /canary/audit/archive/upload` endpoint for archive->sign->upload flow
+   - add typed remote sink config (`ZEROCLAW_CANARY_ARCHIVE_SINK_URL`, optional bearer token)
+   - add `scripts/edge_worker_canary_archive_upload.sh` for operator-triggered remote uploads
+   - add deterministic tests for sink config parsing and remote archive bundle signing
+   - local end-to-end verification with `wrangler dev` + local HTTP sink confirms signed payload delivery
 
 ## Milestones And Exit Criteria
 
