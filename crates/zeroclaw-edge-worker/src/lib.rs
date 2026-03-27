@@ -913,6 +913,17 @@ fn extract_web_search_query_from_text(message: &str) -> Option<String> {
     {
         return sanitize_tool_payload(trimmed);
     }
+
+    let has_search_verb =
+        lower.contains("search") || lower.contains("look up") || lower.contains("find");
+    let has_online_or_news_scope = lower.contains("news")
+        || lower.contains("online")
+        || lower.contains("web")
+        || lower.contains("internet")
+        || lower.contains("today");
+    if has_search_verb && has_online_or_news_scope {
+        return sanitize_tool_payload(trimmed);
+    }
     None
 }
 
@@ -3290,6 +3301,11 @@ mod tests {
         assert_eq!(
             route_message_to_edge_runtime("Find me some recent news online", &allow_all).unwrap(),
             "delegate:web_search_tool:Find me some recent news online"
+        );
+        assert_eq!(
+            route_message_to_edge_runtime("Search and find me some news today?", &allow_all)
+                .unwrap(),
+            "delegate:web_search_tool:Search and find me some news today"
         );
         assert_eq!(
             route_message_to_edge_runtime("fetch https://example.com", &allow_all).unwrap(),
