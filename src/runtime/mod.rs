@@ -6,7 +6,7 @@ pub mod wasm;
 
 pub use docker::DockerRuntime;
 pub use native::NativeRuntime;
-pub use traits::{RuntimeAdapter, RuntimeCapabilities};
+pub use traits::RuntimeAdapter;
 #[cfg(feature = "runtime-wasm")]
 pub use wasm::WasmRuntime;
 
@@ -82,6 +82,31 @@ mod tests {
         let rt = create_runtime(&cfg).unwrap();
         assert_eq!(rt.name(), "docker");
         assert!(rt.has_shell_access());
+    }
+
+    #[cfg(feature = "runtime-wasm")]
+    #[test]
+    fn factory_wasm() {
+        let cfg = RuntimeConfig {
+            kind: "wasm".into(),
+            ..RuntimeConfig::default()
+        };
+        let rt = create_runtime(&cfg).unwrap();
+        assert_eq!(rt.name(), "wasm");
+        assert!(!rt.has_shell_access());
+    }
+
+    #[cfg(not(feature = "runtime-wasm"))]
+    #[test]
+    fn factory_wasm_requires_feature() {
+        let cfg = RuntimeConfig {
+            kind: "wasm".into(),
+            ..RuntimeConfig::default()
+        };
+        match create_runtime(&cfg) {
+            Err(err) => assert!(err.to_string().contains("runtime-wasm")),
+            Ok(_) => panic!("wasm runtime should require the runtime-wasm feature"),
+        }
     }
 
     #[test]

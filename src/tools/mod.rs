@@ -239,12 +239,12 @@ impl RuntimeCapability {
     }
 }
 
-fn runtime_capability_set(capabilities: RuntimeCapabilities) -> HashSet<RuntimeCapability> {
+fn runtime_capabilities(runtime: &dyn RuntimeAdapter) -> HashSet<RuntimeCapability> {
     let mut caps = HashSet::new();
-    if capabilities.shell_access {
+    if runtime.has_shell_access() {
         caps.insert(RuntimeCapability::Shell);
     }
-    if capabilities.filesystem_access {
+    if runtime.has_filesystem_access() {
         caps.insert(RuntimeCapability::Filesystem);
     }
     caps
@@ -351,8 +351,7 @@ pub fn default_tools_with_runtime(
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
 ) -> Vec<Box<dyn Tool>> {
-    let capabilities = runtime.capabilities();
-    let caps = runtime_capability_set(capabilities);
+    let caps = runtime_capabilities(runtime.as_ref());
     let mut tools: Vec<Arc<dyn Tool>> = Vec::new();
     register_tool_with_runtime_requirements(
         &mut tools,
@@ -460,10 +459,9 @@ pub fn all_tools_with_runtime(
     fallback_api_key: Option<&str>,
     root_config: &crate::config::Config,
 ) -> (Vec<Box<dyn Tool>>, Option<DelegateParentToolsHandle>) {
-    let capabilities = runtime.capabilities();
-    let runtime_caps = runtime_capability_set(capabilities);
-    let has_shell_access = capabilities.shell_access;
-    let has_filesystem_access = capabilities.filesystem_access;
+    let runtime_caps = runtime_capabilities(runtime.as_ref());
+    let has_shell_access = runtime_caps.contains(&RuntimeCapability::Shell);
+    let has_filesystem_access = runtime_caps.contains(&RuntimeCapability::Filesystem);
     let sandbox = create_sandbox(&root_config.security);
     let mut tool_arcs: Vec<Arc<dyn Tool>> = Vec::new();
     register_tool_with_runtime_requirements(

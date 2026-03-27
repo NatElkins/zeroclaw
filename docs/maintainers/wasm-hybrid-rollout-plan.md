@@ -49,12 +49,12 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
 5. `feat(runtime): harden runtime capability contract and kind matrix tests`
    - PR: #7
    - status: open in stack
+6. `test(runtime): add wasm runtime activation smoke coverage`
+   - PR: #8
+   - status: open in stack
 
 ## Next
 
-6. WASM runtime activation path
-   - smoke tests for `runtime.kind = "wasm"` with feature enabled
-   - explicit negative-path tests when feature is disabled
 7. Memory backend abstraction for edge
    - network-first memory adapter for WASM runtimes
    - shared schema compatibility tests between native and edge adapters
