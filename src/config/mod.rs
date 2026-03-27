@@ -25,13 +25,13 @@ pub use schema::{
     NotionConfig, ObservabilityConfig, OpenAiSttConfig, OpenAiTtsConfig, OpenVpnTunnelConfig,
     OtpConfig, OtpMethod, PeripheralBoardConfig, PeripheralsConfig, PluginsConfig,
     ProjectIntelConfig, ProxyConfig, ProxyScope, QdrantConfig, QueryClassificationConfig,
-    ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig, SandboxBackend, SandboxConfig,
-    SchedulerConfig, SecretsConfig, SecurityConfig, SecurityOpsConfig, SkillCreationConfig,
-    SkillsConfig, SkillsPromptInjectionMode, SlackConfig, StorageConfig, StorageProviderConfig,
-    StorageProviderSection, StreamMode, SwarmConfig, SwarmStrategy, TelegramConfig,
-    TextBrowserConfig, ToolFilterGroup, ToolFilterGroupMode, TranscriptionConfig, TtsConfig,
-    TunnelConfig, WasmRuntimeConfig, WebFetchConfig, WebSearchConfig, WebhookConfig,
-    WorkspaceConfig,
+    ReliabilityConfig, ResourceLimitsConfig, RuntimeCapabilityDelegationConfig, RuntimeConfig,
+    SandboxBackend, SandboxConfig, SchedulerConfig, SecretsConfig, SecurityConfig,
+    SecurityOpsConfig, SkillCreationConfig, SkillsConfig, SkillsPromptInjectionMode, SlackConfig,
+    StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode, SwarmConfig,
+    SwarmStrategy, TelegramConfig, TextBrowserConfig, ToolFilterGroup, ToolFilterGroupMode,
+    TranscriptionConfig, TtsConfig, TunnelConfig, WasmRuntimeConfig, WebFetchConfig,
+    WebSearchConfig, WebhookConfig, WorkspaceConfig,
 };
 
 pub fn name_and_presence<T: traits::ChannelConfig>(channel: Option<&T>) -> (&'static str, bool) {
