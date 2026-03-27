@@ -293,7 +293,6 @@ impl Provider for ClaudeCodeProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -416,30 +415,40 @@ mod tests {
     /// busy") races that occur when parallel test threads create and exec
     /// scripts concurrently on the same filesystem.
     fn echo_provider() -> ClaudeCodeProvider {
-        static SCRIPT_ID: AtomicUsize = AtomicUsize::new(0);
-        let script_id = SCRIPT_ID.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "zeroclaw_test_claude_code_{}_{}",
-            std::process::id(),
-            script_id
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        use std::io::Write;
 
-        let path = dir.join("fake_claude.sh");
-        std::fs::write(&path, "#!/bin/sh\ncat /dev/stdin\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        static SCRIPT_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+        let path = SCRIPT_PATH.get_or_init(|| {
+            let dir = std::env::temp_dir().join("zeroclaw_test_claude_code");
+            std::fs::create_dir_all(&dir).unwrap();
+
+            let path = dir.join(format!("fake_claude_{}.sh", std::process::id()));
+            if !path.exists() {
+                let mut f = std::fs::File::create(&path).unwrap();
+                writeln!(f, "#!/bin/sh\ncat /dev/stdin").unwrap();
+                f.sync_all().unwrap();
+                drop(f);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                        .unwrap();
+                }
+            }
+            path
+        });
+
+        ClaudeCodeProvider {
+            binary_path: path.clone(),
         }
-        ClaudeCodeProvider { binary_path: path }
     }
 
     #[test]
-    fn echo_provider_uses_unique_script_paths() {
+    fn echo_provider_reuses_script_path() {
         let first = echo_provider();
         let second = echo_provider();
-        assert_ne!(first.binary_path, second.binary_path);
+        assert_eq!(first.binary_path, second.binary_path);
     }
 
     #[tokio::test]
