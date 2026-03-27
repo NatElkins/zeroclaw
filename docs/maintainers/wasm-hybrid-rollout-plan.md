@@ -79,6 +79,11 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
    - status: in progress in stack
    - metrics ingestion + traffic split apply + event sink persistence
    - deterministic end-to-end canary tick simulations
+13. Cloudflare CLI traffic client wiring
+   - PR: #17
+   - status: in progress in stack
+   - typed `wrangler versions deploy` adapter for rollout split updates
+   - deterministic command-assembly tests including rollback and `npx wrangler` invocation
 
 ## Milestones And Exit Criteria
 
@@ -124,7 +129,6 @@ Exit criteria:
 - Cloudflare canary deployed with rollback automation.
 - cost/latency/error-rate dashboards available.
 - deterministic canary state machine coverage in local CI.
-- deterministic canary orchestration coverage (decision -> apply/rollback -> audit event).
 
 Exit criteria:
 - SLO burn acceptable for 7-day canary.
