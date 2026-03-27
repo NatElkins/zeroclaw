@@ -4,6 +4,7 @@ use super::{
     MemoryBackendKind,
 };
 use crate::config::Config;
+use anyhow::Context;
 use anyhow::{bail, Result};
 use console::style;
 
@@ -38,6 +39,52 @@ fn create_cli_memory(config: &Config) -> Result<Box<dyn Memory>> {
     match classify_memory_backend(&backend) {
         MemoryBackendKind::None => {
             bail!("Memory backend is 'none' (disabled). No entries to manage.");
+        }
+        MemoryBackendKind::Http => {
+            let sp = &config.storage.provider.config;
+            let api_url = sp
+                .api_url
+                .as_deref()
+                .or(sp.db_url.as_deref())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .context(
+                    "memory backend 'http' requires api_url in [storage.provider.config] (or db_url)",
+                )?;
+
+            let mem =
+                super::HttpMemory::new(api_url, sp.api_token.as_deref(), sp.connect_timeout_secs)?;
+            Ok(Box::new(mem))
+        }
+        #[cfg(feature = "memory-postgres")]
+        MemoryBackendKind::Postgres => {
+            #[cfg(feature = "memory-postgres")]
+            {
+                let sp = &config.storage.provider.config;
+                let db_url = sp
+                    .db_url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .context(
+                        "memory backend 'postgres' requires db_url in [storage.provider.config]",
+                    )?;
+                let mem = super::PostgresMemory::new(
+                    db_url,
+                    &sp.schema,
+                    &sp.table,
+                    sp.connect_timeout_secs,
+                )?;
+                Ok(Box::new(mem))
+            }
+            #[cfg(not(feature = "memory-postgres"))]
+            {
+                bail!("Memory backend 'postgres' requires the 'memory-postgres' feature to be enabled at compile time.");
+            }
+        }
+        #[cfg(not(feature = "memory-postgres"))]
+        MemoryBackendKind::Postgres => {
+            bail!("memory backend 'postgres' requires the 'memory-postgres' feature to be enabled");
         }
         _ => create_memory_for_migration(&backend, &config.workspace_dir),
     }

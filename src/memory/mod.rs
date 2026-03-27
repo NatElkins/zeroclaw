@@ -6,6 +6,7 @@ pub mod conflict;
 pub mod consolidation;
 pub mod decay;
 pub mod embeddings;
+pub mod http;
 pub mod hygiene;
 pub mod importance;
 pub mod knowledge_graph;
@@ -31,6 +32,7 @@ pub use backend::{
     classify_memory_backend, default_memory_backend_key, memory_backend_profile,
     selectable_memory_backends, MemoryBackendKind, MemoryBackendProfile,
 };
+pub use http::HttpMemory;
 pub use lucid::LucidMemory;
 pub use markdown::MarkdownMemory;
 pub use none::NoneMemory;
@@ -50,14 +52,18 @@ use anyhow::Context;
 use std::path::Path;
 use std::sync::Arc;
 
-fn create_memory_with_builders<F>(
+fn create_memory_with_builders<F, G, H>(
     backend_name: &str,
     workspace_dir: &Path,
     mut sqlite_builder: F,
+    mut postgres_builder: G,
+    mut http_builder: H,
     unknown_context: &str,
 ) -> anyhow::Result<Box<dyn Memory>>
 where
     F: FnMut() -> anyhow::Result<SqliteMemory>,
+    G: FnMut() -> anyhow::Result<Box<dyn Memory>>,
+    H: FnMut() -> anyhow::Result<Box<dyn Memory>>,
 {
     match classify_memory_backend(backend_name) {
         MemoryBackendKind::Sqlite => Ok(Box::new(sqlite_builder()?)),
@@ -65,6 +71,8 @@ where
             let local = sqlite_builder()?;
             Ok(Box::new(LucidMemory::new(workspace_dir, local)))
         }
+        MemoryBackendKind::Postgres => postgres_builder(),
+        MemoryBackendKind::Http => http_builder(),
         MemoryBackendKind::Qdrant | MemoryBackendKind::Markdown => {
             Ok(Box::new(MarkdownMemory::new(workspace_dir)))
         }
@@ -312,6 +320,62 @@ pub fn create_memory_with_storage_and_routes(
         Ok(mem)
     }
 
+    #[cfg(feature = "memory-postgres")]
+    fn build_postgres_memory(
+        storage_provider: Option<&StorageProviderConfig>,
+    ) -> anyhow::Result<Box<dyn Memory>> {
+        let storage_provider = storage_provider
+            .context("memory backend 'postgres' requires [storage.provider.config] settings")?;
+        let db_url = storage_provider
+            .db_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .context(
+                "memory backend 'postgres' requires [storage.provider.config].db_url (or dbURL)",
+            )?;
+
+        let memory = PostgresMemory::new(
+            db_url,
+            &storage_provider.schema,
+            &storage_provider.table,
+            storage_provider.connect_timeout_secs,
+        )?;
+        Ok(Box::new(memory))
+    }
+
+    #[cfg(not(feature = "memory-postgres"))]
+    fn build_postgres_memory(
+        _storage_provider: Option<&StorageProviderConfig>,
+    ) -> anyhow::Result<Box<dyn Memory>> {
+        anyhow::bail!(
+            "memory backend 'postgres' requested but this build was compiled without `memory-postgres`; rebuild with `--features memory-postgres`"
+        );
+    }
+
+    fn build_http_memory(
+        storage_provider: Option<&StorageProviderConfig>,
+    ) -> anyhow::Result<Box<dyn Memory>> {
+        let storage_provider = storage_provider
+            .context("memory backend 'http' requires [storage.provider.config] settings")?;
+        let api_url = storage_provider
+            .api_url
+            .as_deref()
+            .or(storage_provider.db_url.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .context(
+                "memory backend 'http' requires [storage.provider.config].api_url (or db_url)",
+            )?;
+
+        let memory = HttpMemory::new(
+            api_url,
+            storage_provider.api_token.as_deref(),
+            storage_provider.connect_timeout_secs,
+        )?;
+        Ok(Box::new(memory))
+    }
+
     if matches!(backend_kind, MemoryBackendKind::Qdrant) {
         let url = config
             .qdrant
@@ -357,6 +421,8 @@ pub fn create_memory_with_storage_and_routes(
         &backend_name,
         workspace_dir,
         || build_sqlite_memory(config, workspace_dir, &resolved_embedding),
+        || build_postgres_memory(storage_provider),
+        || build_http_memory(storage_provider),
         "",
     )
 }
@@ -371,10 +437,21 @@ pub fn create_memory_for_migration(
         );
     }
 
+    if matches!(
+        classify_memory_backend(backend),
+        MemoryBackendKind::Postgres | MemoryBackendKind::Http
+    ) {
+        anyhow::bail!(
+            "memory migration for backend '{backend}' is unsupported; migrate with sqlite or markdown first"
+        );
+    }
+
     create_memory_with_builders(
         backend,
         workspace_dir,
         || SqliteMemory::new(workspace_dir),
+        || anyhow::bail!("postgres backend is not available in migration context"),
+        || anyhow::bail!("http backend is not available in migration context"),
         " during migration",
     )
 }

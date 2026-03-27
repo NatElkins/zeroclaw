@@ -4734,6 +4734,22 @@ pub struct StorageProviderConfig {
     )]
     pub db_url: Option<String>,
 
+    /// Base URL for HTTP memory API backends.
+    /// Accepts aliases for compatibility with external adapters.
+    #[serde(
+        default,
+        alias = "apiURL",
+        alias = "base_url",
+        alias = "baseUrl",
+        alias = "url"
+    )]
+    pub api_url: Option<String>,
+
+    /// Optional bearer token for HTTP memory API backends.
+    /// Accepts aliases: apiToken, token.
+    #[serde(default, alias = "apiToken", alias = "token")]
+    pub api_token: Option<String>,
+
     /// Database schema for SQL backends.
     #[serde(default = "default_storage_schema")]
     pub schema: String,
@@ -4760,6 +4776,8 @@ impl Default for StorageProviderConfig {
         Self {
             provider: String::new(),
             db_url: None,
+            api_url: None,
+            api_token: None,
             schema: default_storage_schema(),
             table: default_storage_table(),
             connect_timeout_secs: None,
@@ -4819,8 +4837,10 @@ pub enum SearchMode {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct MemoryConfig {
-    /// "sqlite" | "lucid" | "qdrant" | "markdown" | "none" (`none` = explicit no-op memory)
+    /// "sqlite" | "lucid" | "postgres" | "http" | "qdrant" | "markdown" | "none" (`none` = explicit no-op memory)
     ///
+    /// `postgres` requires `[storage.provider.config]` with `db_url` (`dbURL` alias supported).
+    /// `http` requires `[storage.provider.config]` with `api_url` (`url` alias supported).
     /// `qdrant` uses `[memory.qdrant]` config or `QDRANT_URL` env var.
     pub backend: String,
     /// Auto-save user-stated conversation input to memory (assistant output is excluded)
@@ -8945,6 +8965,11 @@ impl Config {
                 &mut config.storage.provider.config.db_url,
                 "config.storage.provider.config.db_url",
             )?;
+            decrypt_optional_secret(
+                &store,
+                &mut config.storage.provider.config.api_token,
+                "config.storage.provider.config.api_token",
+            )?;
 
             for agent in config.agents.values_mut() {
                 decrypt_optional_secret(&store, &mut agent.api_key, "config.agents.*.api_key")?;
@@ -10264,6 +10289,22 @@ impl Config {
             }
         }
 
+        // Storage HTTP memory API URL: ZEROCLAW_STORAGE_API_URL
+        if let Ok(api_url) = std::env::var("ZEROCLAW_STORAGE_API_URL") {
+            let api_url = api_url.trim();
+            if !api_url.is_empty() {
+                self.storage.provider.config.api_url = Some(api_url.to_string());
+            }
+        }
+
+        // Storage HTTP memory API bearer token: ZEROCLAW_STORAGE_API_TOKEN
+        if let Ok(api_token) = std::env::var("ZEROCLAW_STORAGE_API_TOKEN") {
+            let api_token = api_token.trim();
+            if !api_token.is_empty() {
+                self.storage.provider.config.api_token = Some(api_token.to_string());
+            }
+        }
+
         // Storage connect timeout: ZEROCLAW_STORAGE_CONNECT_TIMEOUT_SECS
         if let Ok(timeout_secs) = std::env::var("ZEROCLAW_STORAGE_CONNECT_TIMEOUT_SECS") {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
@@ -10416,6 +10457,11 @@ impl Config {
             &store,
             &mut config_to_save.storage.provider.config.db_url,
             "config.storage.provider.config.db_url",
+        )?;
+        encrypt_optional_secret(
+            &store,
+            &mut config_to_save.storage.provider.config.api_token,
+            "config.storage.provider.config.api_token",
         )?;
 
         for agent in config_to_save.agents.values_mut() {
@@ -11343,6 +11389,8 @@ auto_save = true
         let storage = StorageConfig::default();
         assert!(storage.provider.config.provider.is_empty());
         assert!(storage.provider.config.db_url.is_none());
+        assert!(storage.provider.config.api_url.is_none());
+        assert!(storage.provider.config.api_token.is_none());
         assert_eq!(storage.provider.config.schema, "public");
         assert_eq!(storage.provider.config.table, "memories");
         assert!(storage.provider.config.connect_timeout_secs.is_none());
@@ -11840,6 +11888,29 @@ connect_timeout_secs = 12
     }
 
     #[test]
+    async fn storage_provider_http_aliases_deserialize() {
+        let raw = r#"
+default_temperature = 0.7
+
+[storage.provider.config]
+provider = "http"
+url = "https://memory.example.com"
+token = "secret-token"
+"#;
+
+        let parsed = parse_test_config(raw);
+        assert_eq!(parsed.storage.provider.config.provider, "http");
+        assert_eq!(
+            parsed.storage.provider.config.api_url.as_deref(),
+            Some("https://memory.example.com")
+        );
+        assert_eq!(
+            parsed.storage.provider.config.api_token.as_deref(),
+            Some("secret-token")
+        );
+    }
+
+    #[test]
     async fn runtime_reasoning_enabled_deserializes() {
         let raw = r#"
 default_temperature = 0.7
@@ -12087,6 +12158,7 @@ default_temperature = 0.7
         config.browser.computer_use.api_key = Some("browser-credential".into());
         config.web_search.brave_api_key = Some("brave-credential".into());
         config.storage.provider.config.db_url = Some("postgres://user:pw@host/db".into());
+        config.storage.provider.config.api_token = Some("edge-memory-token".into());
         config.channels_config.feishu = Some(FeishuConfig {
             app_id: "cli_feishu_123".into(),
             app_secret: "feishu-secret".into(),
@@ -12165,6 +12237,15 @@ default_temperature = 0.7
         assert_eq!(
             store.decrypt(storage_db_url).unwrap(),
             "postgres://user:pw@host/db"
+        );
+
+        let storage_api_token = stored.storage.provider.config.api_token.as_deref().unwrap();
+        assert!(crate::security::SecretStore::is_encrypted(
+            storage_api_token
+        ));
+        assert_eq!(
+            store.decrypt(storage_api_token).unwrap(),
+            "edge-memory-token"
         );
 
         let feishu = stored.channels_config.feishu.as_ref().unwrap();
@@ -14271,8 +14352,10 @@ default_model = "persisted-profile"
         let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
-        std::env::set_var("ZEROCLAW_STORAGE_PROVIDER", "qdrant");
-        std::env::set_var("ZEROCLAW_STORAGE_DB_URL", "http://localhost:6333");
+        std::env::set_var("ZEROCLAW_STORAGE_PROVIDER", "postgres");
+        std::env::set_var("ZEROCLAW_STORAGE_DB_URL", "postgres://example/db");
+        std::env::set_var("ZEROCLAW_STORAGE_API_URL", "https://memory.example.com");
+        std::env::set_var("ZEROCLAW_STORAGE_API_TOKEN", "edge-token");
         std::env::set_var("ZEROCLAW_STORAGE_CONNECT_TIMEOUT_SECS", "15");
 
         config.apply_env_overrides();
@@ -14283,12 +14366,22 @@ default_model = "persisted-profile"
             Some("http://localhost:6333")
         );
         assert_eq!(
+            config.storage.provider.config.api_url.as_deref(),
+            Some("https://memory.example.com")
+        );
+        assert_eq!(
+            config.storage.provider.config.api_token.as_deref(),
+            Some("edge-token")
+        );
+        assert_eq!(
             config.storage.provider.config.connect_timeout_secs,
             Some(15)
         );
 
         std::env::remove_var("ZEROCLAW_STORAGE_PROVIDER");
         std::env::remove_var("ZEROCLAW_STORAGE_DB_URL");
+        std::env::remove_var("ZEROCLAW_STORAGE_API_URL");
+        std::env::remove_var("ZEROCLAW_STORAGE_API_TOKEN");
         std::env::remove_var("ZEROCLAW_STORAGE_CONNECT_TIMEOUT_SECS");
     }
 
