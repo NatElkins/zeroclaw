@@ -15,6 +15,8 @@ pub mod canary_live;
 pub mod canary_metrics;
 pub mod canary_orchestrator;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod canary_schedule;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod canary_tick;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cloudflare_cli;
