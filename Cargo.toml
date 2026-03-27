@@ -213,6 +213,10 @@ pdf-extract = { version = "0.10", optional = true }
 
 # WASM plugin runtime (extism)
 extism = { version = "1.9", optional = true }
+
+# Cross-platform audio capture for voice wake word detection (optional)
+cpal = { version = "0.15", optional = true }
+
 # WASM runtime sandbox engine (used by runtime.kind = "wasm")
 wasmi = { version = "0.40", optional = true }
 

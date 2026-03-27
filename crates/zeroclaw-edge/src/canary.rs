@@ -6,13 +6,15 @@
 use std::fmt;
 use std::num::{NonZeroU64, NonZeroU8};
 
-/// Percentage in the inclusive range `[1, 100]`.
+/// Percentage in the inclusive range `[0, 100]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Percent(u8);
 
 impl Percent {
+    pub const ZERO: Self = Self(0);
+
     pub fn new(value: u8) -> Result<Self, CanaryConfigError> {
-        if !(1..=100).contains(&value) {
+        if value > 100 {
             return Err(CanaryConfigError::PercentOutOfRange { value });
         }
         Ok(Self(value))
@@ -22,6 +24,8 @@ impl Percent {
         self.0
     }
 }
+
+pub type TrafficPercent = Percent;
 
 /// Rate encoded as basis points (`0..=10_000`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -382,7 +386,7 @@ impl fmt::Display for CanaryConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PercentOutOfRange { value } => {
-                write!(f, "percent out of range [1, 100]: {value}")
+                write!(f, "percent out of range [0, 100]: {value}")
             }
             Self::BasisPointsOutOfRange { value } => {
                 write!(f, "basis points out of range [0, 10000]: {value}")
