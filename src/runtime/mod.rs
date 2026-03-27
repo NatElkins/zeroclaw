@@ -6,7 +6,7 @@ pub mod wasm;
 
 pub use docker::DockerRuntime;
 pub use native::NativeRuntime;
-pub use traits::RuntimeAdapter;
+pub use traits::{RuntimeAdapter, RuntimeCapabilities};
 #[cfg(feature = "runtime-wasm")]
 pub use wasm::WasmRuntime;
 
@@ -42,6 +42,11 @@ pub fn create_runtime(config: &RuntimeConfig) -> anyhow::Result<Box<dyn RuntimeA
     }
 }
 
+/// Resolve the capability contract for the configured runtime.
+pub fn runtime_capabilities(config: &RuntimeConfig) -> anyhow::Result<RuntimeCapabilities> {
+    Ok(create_runtime(config)?.capabilities())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,6 +63,17 @@ mod tests {
     }
 
     #[test]
+    fn capability_contract_native() {
+        let cfg = RuntimeConfig {
+            kind: "native".into(),
+            ..RuntimeConfig::default()
+        };
+
+        let capabilities = runtime_capabilities(&cfg).unwrap();
+        assert_eq!(capabilities, RuntimeCapabilities::new(true, true, true, 0));
+    }
+
+    #[test]
     fn factory_docker() {
         let cfg = RuntimeConfig {
             kind: "docker".into(),
@@ -66,6 +82,51 @@ mod tests {
         let rt = create_runtime(&cfg).unwrap();
         assert_eq!(rt.name(), "docker");
         assert!(rt.has_shell_access());
+    }
+
+    #[test]
+    fn capability_contract_docker_default() {
+        let cfg = RuntimeConfig {
+            kind: "docker".into(),
+            ..RuntimeConfig::default()
+        };
+
+        let capabilities = runtime_capabilities(&cfg).unwrap();
+        assert_eq!(
+            capabilities,
+            RuntimeCapabilities::new(
+                true,
+                true,
+                false,
+                cfg.docker
+                    .memory_limit_mb
+                    .unwrap_or_default()
+                    .saturating_mul(1024 * 1024),
+            )
+        );
+    }
+
+    #[test]
+    fn capability_contract_docker_without_workspace_mount() {
+        let mut cfg = RuntimeConfig {
+            kind: "docker".into(),
+            ..RuntimeConfig::default()
+        };
+        cfg.docker.mount_workspace = false;
+
+        let capabilities = runtime_capabilities(&cfg).unwrap();
+        assert_eq!(
+            capabilities,
+            RuntimeCapabilities::new(
+                true,
+                false,
+                false,
+                cfg.docker
+                    .memory_limit_mb
+                    .unwrap_or_default()
+                    .saturating_mul(1024 * 1024),
+            )
+        );
     }
 
     #[cfg(feature = "runtime-wasm")]
@@ -78,6 +139,21 @@ mod tests {
         let rt = create_runtime(&cfg).unwrap();
         assert_eq!(rt.name(), "wasm");
         assert!(!rt.has_shell_access());
+    }
+
+    #[cfg(feature = "runtime-wasm")]
+    #[test]
+    fn capability_contract_wasm() {
+        let cfg = RuntimeConfig {
+            kind: "wasm".into(),
+            ..RuntimeConfig::default()
+        };
+
+        let capabilities = runtime_capabilities(&cfg).unwrap();
+        assert_eq!(
+            capabilities,
+            RuntimeCapabilities::new(false, false, false, cfg.wasm.memory_limit_mb * 1024 * 1024)
+        );
     }
 
     #[cfg(not(feature = "runtime-wasm"))]

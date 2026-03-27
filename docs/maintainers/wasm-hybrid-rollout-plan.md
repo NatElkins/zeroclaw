@@ -46,12 +46,12 @@ It is intentionally implementation-oriented (sequence, acceptance criteria, roll
 4. `feat(runtime): add feature-gated wasm runtime factory/config path`
    - PR: #4
    - status: open in stack
+5. `feat(runtime): harden runtime capability contract and kind matrix tests`
+   - PR: #7
+   - status: open in stack
 
 ## Next
 
-5. Runtime capability contract hardening
-   - make capability checks declarative and centrally testable
-   - add regression tests for all runtime kinds (`native`, `docker`, `wasm`)
 6. WASM runtime activation path
    - smoke tests for `runtime.kind = "wasm"` with feature enabled
    - explicit negative-path tests when feature is disabled

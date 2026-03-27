@@ -1,5 +1,30 @@
 use std::path::{Path, PathBuf};
 
+/// Capability contract for a runtime adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeCapabilities {
+    pub shell_access: bool,
+    pub filesystem_access: bool,
+    pub long_running: bool,
+    pub memory_budget_bytes: u64,
+}
+
+impl RuntimeCapabilities {
+    pub const fn new(
+        shell_access: bool,
+        filesystem_access: bool,
+        long_running: bool,
+        memory_budget_bytes: u64,
+    ) -> Self {
+        Self {
+            shell_access,
+            filesystem_access,
+            long_running,
+            memory_budget_bytes,
+        }
+    }
+}
+
 /// Runtime adapter that abstracts platform differences for the agent.
 ///
 /// Implement this trait to port the agent to a new execution environment.
@@ -50,6 +75,19 @@ pub trait RuntimeAdapter: Send + Sync {
     /// memory ceiling so the agent can adapt buffer sizes and caching.
     fn memory_budget(&self) -> u64 {
         0
+    }
+
+    /// Return the runtime capability contract as a single value.
+    ///
+    /// This is the canonical capability surface consumed by tool
+    /// registration and runtime-matrix tests.
+    fn capabilities(&self) -> RuntimeCapabilities {
+        RuntimeCapabilities::new(
+            self.has_shell_access(),
+            self.has_filesystem_access(),
+            self.supports_long_running(),
+            self.memory_budget(),
+        )
     }
 
     /// Build a shell command process configured for this runtime.
@@ -118,12 +156,14 @@ mod tests {
     #[test]
     fn runtime_reports_capabilities() {
         let runtime = DummyRuntime;
+        let capabilities = runtime.capabilities();
 
         assert_eq!(runtime.name(), "dummy-runtime");
         assert!(runtime.has_shell_access());
         assert!(runtime.has_filesystem_access());
         assert!(runtime.supports_long_running());
         assert_eq!(runtime.storage_path(), PathBuf::from("/tmp/dummy-runtime"));
+        assert_eq!(capabilities, RuntimeCapabilities::new(true, true, true, 0));
     }
 
     #[tokio::test]
