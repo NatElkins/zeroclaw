@@ -715,7 +715,7 @@ const ENV_EDGE_DELEGATE_AUTH_TOKEN: &str = "ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN";
 #[cfg(any(test, target_arch = "wasm32"))]
 const ENV_EDGE_DELEGATE_ALLOWED_TOOLS: &str = "ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS";
 #[cfg(any(test, target_arch = "wasm32"))]
-const DEFAULT_EDGE_DELEGATE_ALLOWED_TOOLS: &str = "shell";
+const DEFAULT_EDGE_DELEGATE_ALLOWED_TOOLS: &str = "shell,web_search_tool";
 
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -827,6 +827,137 @@ fn is_edge_runtime_prefixed_message(message: &str) -> bool {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+fn delegated_tool_allowed(allowed_tools: &[DelegatedTool], target: DelegatedTool) -> bool {
+    allowed_tools.iter().any(|tool| *tool == target)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn sanitize_tool_payload(raw: &str) -> Option<String> {
+    let trimmed = raw
+        .trim()
+        .trim_matches('?')
+        .trim()
+        .trim_matches('"')
+        .trim_matches('`')
+        .trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn extract_shell_command_from_text(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("run the ") && lower.ends_with(" function") {
+        let cmd = &trimmed["run the ".len()..trimmed.len() - " function".len()];
+        return sanitize_tool_payload(cmd);
+    }
+    for prefix in ["run ", "execute ", "exec "] {
+        if lower.starts_with(prefix) {
+            return sanitize_tool_payload(&trimmed[prefix.len()..]);
+        }
+    }
+    if lower == "list files" || lower == "show files" {
+        return Some("ls -la".to_string());
+    }
+    let first = lower.split_whitespace().next().unwrap_or_default();
+    if [
+        "ls", "pwd", "whoami", "git", "cat", "echo", "rg", "du", "df", "ps",
+    ]
+    .contains(&first)
+    {
+        return sanitize_tool_payload(trimmed);
+    }
+    None
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn extract_web_search_query_from_text(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    for prefix in [
+        "search online for ",
+        "search the web for ",
+        "search web for ",
+        "look up ",
+        "find news about ",
+        "find articles about ",
+        "latest news about ",
+        "recent news about ",
+        "can you search online for ",
+        "please search online for ",
+        "could you search online for ",
+    ] {
+        if lower.starts_with(prefix) {
+            return sanitize_tool_payload(&trimmed[prefix.len()..]);
+        }
+    }
+
+    if lower.contains("recent news") || lower.contains("latest news") {
+        if let Some(idx) = lower.find("about ") {
+            let about_start = idx + "about ".len();
+            return sanitize_tool_payload(&trimmed[about_start..]);
+        }
+        return sanitize_tool_payload(trimmed);
+    }
+
+    if lower.contains("search online")
+        || lower.contains("search the web")
+        || lower.contains("search web")
+        || lower.contains("look up")
+        || (lower.starts_with("find me ") && lower.contains("online"))
+    {
+        return sanitize_tool_payload(trimmed);
+    }
+    None
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn extract_web_fetch_url_from_text(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    for prefix in ["fetch ", "open ", "read "] {
+        if lower.starts_with(prefix) {
+            let maybe_url = trimmed[prefix.len()..].trim();
+            if maybe_url.starts_with("http://") || maybe_url.starts_with("https://") {
+                return Some(maybe_url.to_string());
+            }
+        }
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Some(trimmed.to_string());
+    }
+    None
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn route_message_to_edge_runtime(message: &str, allowed_tools: &[DelegatedTool]) -> Option<String> {
+    if is_edge_runtime_prefixed_message(message) {
+        return Some(message.trim().to_string());
+    }
+    if delegated_tool_allowed(allowed_tools, DelegatedTool::Shell) {
+        if let Some(command) = extract_shell_command_from_text(message) {
+            return Some(format!("delegate:shell:{command}"));
+        }
+    }
+    if delegated_tool_allowed(allowed_tools, DelegatedTool::WebSearchTool) {
+        if let Some(query) = extract_web_search_query_from_text(message) {
+            return Some(format!("delegate:web_search_tool:{query}"));
+        }
+    }
+    if delegated_tool_allowed(allowed_tools, DelegatedTool::WebFetch) {
+        if let Some(url) = extract_web_fetch_url_from_text(message) {
+            return Some(format!("delegate:web_fetch:{url}"));
+        }
+    }
+    None
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 fn parse_delegated_tool(raw: &str) -> Result<DelegatedTool> {
     match raw.trim() {
         "shell" => Ok(DelegatedTool::Shell),
@@ -836,6 +967,8 @@ fn parse_delegated_tool(raw: &str) -> Result<DelegatedTool> {
         "glob_search" => Ok(DelegatedTool::GlobSearch),
         "content_search" => Ok(DelegatedTool::ContentSearch),
         "git_operations" => Ok(DelegatedTool::GitOperations),
+        "web_search_tool" | "web_search" => Ok(DelegatedTool::WebSearchTool),
+        "web_fetch" => Ok(DelegatedTool::WebFetch),
         other => Err(anyhow!("unsupported delegated tool '{other}'")),
     }
 }
@@ -2390,11 +2523,14 @@ mod wasm_runtime {
                 })?;
 
         if let Some(delegation_settings) = delegation_settings.as_ref() {
-            if is_edge_runtime_prefixed_message(chat_req.message.as_str()) {
+            if let Some(edge_runtime_message) = route_message_to_edge_runtime(
+                chat_req.message.as_str(),
+                delegation_settings.allowed_tools.as_slice(),
+            ) {
                 let runtime_result = match run_chat_via_edge_runtime(
                     delegation_settings,
                     session_id.clone(),
-                    chat_req.message.as_str(),
+                    edge_runtime_message.as_str(),
                 )
                 .await
                 {
@@ -3138,6 +3274,37 @@ mod tests {
         assert!(!is_edge_runtime_prefixed_message(
             "summarize wasm advantages"
         ));
+    }
+
+    #[test]
+    fn route_message_to_edge_runtime_maps_plain_language_to_tools() {
+        let allow_all = vec![
+            DelegatedTool::Shell,
+            DelegatedTool::WebSearchTool,
+            DelegatedTool::WebFetch,
+        ];
+        assert_eq!(
+            route_message_to_edge_runtime("Run the ls function", &allow_all).unwrap(),
+            "delegate:shell:ls"
+        );
+        assert_eq!(
+            route_message_to_edge_runtime("Find me some recent news online", &allow_all).unwrap(),
+            "delegate:web_search_tool:Find me some recent news online"
+        );
+        assert_eq!(
+            route_message_to_edge_runtime("fetch https://example.com", &allow_all).unwrap(),
+            "delegate:web_fetch:https://example.com"
+        );
+    }
+
+    #[test]
+    fn route_message_to_edge_runtime_obeys_allowlist() {
+        let shell_only = vec![DelegatedTool::Shell];
+        assert!(route_message_to_edge_runtime("search online for wasm", &shell_only).is_none());
+        assert_eq!(
+            route_message_to_edge_runtime("run pwd", &shell_only).unwrap(),
+            "delegate:shell:pwd"
+        );
     }
 
     #[test]

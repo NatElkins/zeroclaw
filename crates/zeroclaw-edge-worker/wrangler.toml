@@ -58,4 +58,4 @@ ZEROCLAW_EDGE_DELEGATION_ENABLED = "false"
 # ZEROCLAW_CANARY_ARCHIVE_SINK_URL (enables /canary/audit/archive/upload remote sink delivery)
 # ZEROCLAW_EDGE_DELEGATE_ENDPOINT_URL (native delegate base URL; /delegate/execute is appended)
 # ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN (bearer token used for edge->native delegate calls)
-# ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS (csv allowlist; default "shell")
+# ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS (csv allowlist; default "shell,web_search_tool")

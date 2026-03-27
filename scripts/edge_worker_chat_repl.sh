@@ -7,7 +7,7 @@ worker_dir="${repo_root}/crates/zeroclaw-edge-worker"
 port="${ZEROCLAW_EDGE_DEMO_PORT:-8799}"
 delegate_addr="${ZEROCLAW_EDGE_DELEGATE_BIND_ADDR:-127.0.0.1:8091}"
 delegate_auth_token="${ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN:-zeroclaw-demo-token-$(date +%s)}"
-delegate_allowed_tools="${ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS:-shell}"
+delegate_allowed_tools="${ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS:-shell,web_search_tool}"
 artifacts_root="${ZEROCLAW_EDGE_HYBRID_ARTIFACTS_DIR:-${repo_root}/artifacts}"
 timestamp="$(date +%Y%m%d-%H%M%S)"
 artifacts_dir="${artifacts_root}/edge-chat-repl-${timestamp}"
@@ -25,6 +25,25 @@ wait_for_worker() {
   local base_url="$1"
   for _ in $(seq 1 90); do
     if curl -fsS "${base_url}/healthz" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_delegate() {
+  local delegate_addr="$1"
+  local auth_token="$2"
+  local probe='{"session_id":"probe","tool":"shell","args":{"command":"true"}}'
+  for _ in $(seq 1 90); do
+    local status
+    status="$(curl -s -o /dev/null -w "%{http_code}" \
+      -X POST "http://${delegate_addr}/delegate/execute" \
+      -H "content-type: application/json" \
+      -H "authorization: Bearer ${auth_token}" \
+      --data "${probe}" || true)"
+    if [[ "${status}" == "200" || "${status}" == "400" || "${status}" == "403" ]]; then
       return 0
     fi
     sleep 1
@@ -154,6 +173,13 @@ ZEROCLAW_EDGE_DELEGATE_AUTH_TOKEN="${delegate_auth_token}" \
 ZEROCLAW_EDGE_DELEGATE_ALLOWED_TOOLS="${delegate_allowed_tools}" \
   cargo run -q -p zeroclaw-edge-native-delegate >"${delegate_log}" 2>&1 &
 delegate_pid="$!"
+
+if ! wait_for_delegate "${delegate_addr}" "${delegate_auth_token}"; then
+  echo "native delegate did not become ready: http://${delegate_addr}/delegate/execute" >&2
+  echo "--- delegate log ---" >&2
+  sed -n '1,220p' "${delegate_log}" >&2 || true
+  exit 1
+fi
 
 {
   echo "ZEROCLAW_EDGE_DELEGATION_ENABLED=true"

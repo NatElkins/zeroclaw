@@ -44,6 +44,8 @@ pub enum DelegatedTool {
     GlobSearch,
     ContentSearch,
     GitOperations,
+    WebSearchTool,
+    WebFetch,
 }
 
 impl DelegatedTool {
@@ -56,6 +58,8 @@ impl DelegatedTool {
             Self::GlobSearch => "glob_search",
             Self::ContentSearch => "content_search",
             Self::GitOperations => "git_operations",
+            Self::WebSearchTool => "web_search_tool",
+            Self::WebFetch => "web_fetch",
         }
     }
 }
@@ -151,7 +155,7 @@ pub trait EdgePlanner: Send + Sync {
 /// Deterministic prefix-based planner for local simulation.
 ///
 /// Accepted message forms:
-/// - `delegate:shell:<command>`
+/// - `delegate:<tool>:<payload>`
 /// - `memory:store:<key>:<content>`
 /// - `memory:recall:<query>`
 #[derive(Debug, Default)]
@@ -161,15 +165,29 @@ pub struct PrefixPlanner;
 impl EdgePlanner for PrefixPlanner {
     async fn plan(&self, message: &str) -> Result<EdgeOperation> {
         let trimmed = message.trim();
-        if let Some(command) = trimmed.strip_prefix("delegate:shell:") {
-            let command = command.trim();
-            if command.is_empty() {
-                anyhow::bail!("delegate:shell command must not be empty");
+        if let Some(rest) = trimmed.strip_prefix("delegate:") {
+            let mut parts = rest.splitn(2, ':');
+            let tool_name = parts.next().unwrap_or_default().trim();
+            let payload = parts.next().unwrap_or_default().trim();
+            if tool_name.is_empty() || payload.is_empty() {
+                anyhow::bail!("delegate messages require delegate:<tool>:<payload>");
             }
-            return Ok(EdgeOperation::DelegatedToolCall {
-                tool: DelegatedTool::Shell,
-                args: serde_json::json!({ "command": command }),
-            });
+            let (tool, args) = match tool_name {
+                "shell" => (
+                    DelegatedTool::Shell,
+                    serde_json::json!({ "command": payload }),
+                ),
+                "web_search_tool" | "web_search" => (
+                    DelegatedTool::WebSearchTool,
+                    serde_json::json!({ "query": payload }),
+                ),
+                "web_fetch" => (
+                    DelegatedTool::WebFetch,
+                    serde_json::json!({ "url": payload }),
+                ),
+                other => anyhow::bail!("unsupported delegated tool '{other}'"),
+            };
+            return Ok(EdgeOperation::DelegatedToolCall { tool, args });
         }
         if let Some(rest) = trimmed.strip_prefix("memory:store:") {
             let mut parts = rest.splitn(2, ':');
@@ -694,6 +712,30 @@ mod tests {
             other => panic!("expected delegated tool operation, got {other:?}"),
         }
 
+        let web_search_operation = planner
+            .plan("delegate:web_search_tool:latest rust wasm news")
+            .await
+            .expect("web search operation should parse");
+        match web_search_operation {
+            EdgeOperation::DelegatedToolCall { tool, args } => {
+                assert_eq!(tool, DelegatedTool::WebSearchTool);
+                assert_eq!(args["query"], "latest rust wasm news");
+            }
+            other => panic!("expected delegated tool operation, got {other:?}"),
+        }
+
+        let web_fetch_operation = planner
+            .plan("delegate:web_fetch:https://example.com")
+            .await
+            .expect("web fetch operation should parse");
+        match web_fetch_operation {
+            EdgeOperation::DelegatedToolCall { tool, args } => {
+                assert_eq!(tool, DelegatedTool::WebFetch);
+                assert_eq!(args["url"], "https://example.com");
+            }
+            other => panic!("expected delegated tool operation, got {other:?}"),
+        }
+
         let store_operation = planner
             .plan("memory:store:project_state:edge loop initialized")
             .await
@@ -731,6 +773,9 @@ mod tests {
             "",
             "unsupported:command",
             "delegate:shell:",
+            "delegate:web_search_tool:",
+            "delegate:",
+            "delegate:unknown:value",
             "memory:store:key_only",
             "memory:store::content",
             "memory:recall:",
